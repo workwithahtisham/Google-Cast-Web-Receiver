@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Custom Cast Receiver</title>
+  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+
+    cast-media-player {
+      width: 100%;
+      height: 100%;
+      display: block;
+      --theme-hue: 210;
+      --progress-color: #4fc3f7;
+      --splash-image: none;
+      --splash-color: #000000;
+    }
+
+    #loading-overlay {
+      position: absolute;
+      inset: 0;
+      background: #000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      opacity: 1;
+      transition: opacity 0.6s ease;
+    }
+
+    #loading-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .loader-logo {
+      font-size: 28px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 2px;
+      margin-bottom: 24px;
+    }
+
+    .loader-spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #4fc3f7;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+
+    .loader-text {
+      margin-top: 18px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.55);
+      letter-spacing: 1px;
+      text-align: center;
+      padding: 0 20px;
+    }
+
+    #error-overlay {
+      position: absolute;
+      inset: 0;
+      background: #0a0a0a;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 200;
+      padding: 24px;
+    }
+
+    #error-overlay.visible {
+      display: flex;
+    }
+
+    .error-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+    }
+
+    .error-title {
+      font-size: 22px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 8px;
+    }
+
+    .error-message {
+      font-size: 14px;
+      color: rgba(255,255,255,0.6);
+      text-align: center;
+      max-width: 500px;
+      line-height: 1.5;
+    }
+
+    #codec-badge {
+      position: absolute;
+      top: 24px;
+      right: 24px;
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.2);
+      color: #fff;
+      font-size: 12px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      z-index: 50;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      letter-spacing: 0.5px;
+    }
+
+    #codec-badge.visible {
+      opacity: 1;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <cast-media-player></cast-media-player>
+
+  <div id="loading-overlay">
+    <div class="loader-logo">CAST RECEIVER</div>
+    <div class="loader-spinner"></div>
+    <div class="loader-text" id="loader-status">Waiting for content…</div>
+  </div>
+
+  <div id="error-overlay">
+    <div class="error-icon">⚠️</div>
+    <div class="error-title">Playback Error</div>
+    <div class="error-message" id="error-message">Unable to play this media.</div>
+  </div>
+
+  <div id="codec-badge"></div>
+
+  <script>
+    const SUPPORTED_FORMATS = {
+      'video/mp4': 'MP4',
+      'video/x-matroska': 'MKV',
+      'video/mkv': 'MKV',
+      'application/x-mpegurl': 'HLS',
+      'application/vnd.apple.mpegurl': 'HLS',
+      'application/dash+xml': 'DASH',
+      'video/webm': 'WebM',
+      'video/ogg': 'OGG'
+    };
+
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const loaderStatus = document.getElementById('loader-status');
+    const errorOverlay = document.getElementById('error-overlay');
+    const errorMessage = document.getElementById('error-message');
+    const codecBadge = document.getElementById('codec-badge');
+
+    const context = cast.framework.CastReceiverContext.getInstance();
+    const playerManager = context.getPlayerManager();
+    const playbackConfig = new cast.framework.PlaybackConfig();
+
+    let codecBadgeTimer = null;
+    let bufferingOverlayTimer = null;
+
+    function showCodecBadge(label) {
+      codecBadge.textContent = label;
+      codecBadge.classList.add('visible');
+      if (codecBadgeTimer) {
+        clearTimeout(codecBadgeTimer);
+      }
+      codecBadgeTimer = setTimeout(() => {
+        codecBadge.classList.remove('visible');
+      }, 4000);
+    }
+
+    function showLoading(message) {
+      if (message) {
+        loaderStatus.textContent = message;
+      }
+      loadingOverlay.classList.remove('hidden');
+    }
+
+    function hideLoading() {
+      loadingOverlay.classList.add('hidden');
+    }
+
+    function showError(message) {
+      hideLoading();
+      errorMessage.textContent = message || 'Unable to play this media.';
+      errorOverlay.classList.add('visible');
+    }
+
+    function clearError() {
+      errorOverlay.classList.remove('visible');
+    }
+
+    function detectMimeFromUrl(url) {
+      const lower = (url || '').toLowerCase().split('?')[0];
+      if (lower.endsWith('.mp4') || lower.endsWith('.m4v') || lower.endsWith('.mov')) return 'video/mp4';
+      if (lower.endsWith('.mkv')) return 'video/x-matroska';
+      if (lower.endsWith('.webm')) return 'video/webm';
+      if (lower.endsWith('.m3u8')) return 'application/x-mpegURL';
+      if (lower.endsWith('.mpd')) return 'application/dash+xml';
+      if (lower.endsWith('.ogv') || lower.endsWith('.ogg')) return 'video/ogg';
+      return 'video/mp4';
+    }
+
+    function detectFormatFromUrl(url) {
+      const lower = (url || '').toLowerCase().split('?')[0];
+      if (lower.endsWith('.mp4') || lower.endsWith('.m4v')) return 'MP4';
+      if (lower.endsWith('.mov')) return 'MOV';
+      if (lower.endsWith('.mkv')) return 'MKV';
+      if (lower.endsWith('.webm')) return 'WebM';
+      if (lower.endsWith('.m3u8')) return 'HLS';
+      if (lower.endsWith('.mpd')) return 'DASH';
+      if (lower.endsWith('.ogv') || lower.endsWith('.ogg')) return 'OGG';
+      return 'VIDEO';
+    }
+
+    function describeMedia(media) {
+      const url = media.contentUrl || media.contentId || '';
+      const contentType = (media.contentType || detectMimeFromUrl(url) || '').toLowerCase();
+      const formatLabel = SUPPORTED_FORMATS[contentType] || detectFormatFromUrl(url);
+      const isHEVC = /\b(hevc|h265|x265)\b/i.test(url) || /\.(hevc|h265|265)(\?|$)/i.test(url);
+      return { url, contentType, formatLabel, isHEVC };
+    }
+
+    playbackConfig.autoPauseDuration = 0;
+
+    playerManager.setMessageInterceptor(
+      cast.framework.messages.MessageType.LOAD,
+      (loadRequestData) => {
+        clearError();
+
+        const media = loadRequestData.media;
+        if (!media) {
+          showLoading('Waiting for content…');
+          return loadRequestData;
+        }
+
+        if (!media.contentUrl && media.contentId) {
+          media.contentUrl = media.contentId;
+        }
+
+        if (!media.contentType) {
+          media.contentType = detectMimeFromUrl(media.contentUrl || media.contentId || '');
+        }
+
+        const mediaInfo = describeMedia(media);
+        const loadingMessage = mediaInfo.isHEVC
+          ? 'Loading HEVC (H.265) video…'
+          : `Loading ${mediaInfo.formatLabel} video…`;
+
+        showLoading(loadingMessage);
+
+        console.log('[Receiver] LOAD', {
+          title: media.metadata && media.metadata.title ? media.metadata.title : 'Unknown',
+          url: mediaInfo.url,
+          contentType: mediaInfo.contentType,
+          format: mediaInfo.formatLabel,
+          isHEVC: mediaInfo.isHEVC
+        });
+
+        return loadRequestData;
+      }
+    );
+
+    playerManager.addEventListener(
+      cast.framework.events.EventType.MEDIA_STATUS,
+      (event) => {
+        const mediaStatus = event.mediaStatus;
+        if (!mediaStatus) {
+          return;
+        }
+
+        const playerState = mediaStatus.playerState;
+
+        if (playerState === cast.framework.messages.PlayerState.PLAYING) {
+          hideLoading();
+          const media = playerManager.getMediaInformation();
+          if (media) {
+            const mediaInfo = describeMedia(media);
+            showCodecBadge(mediaInfo.isHEVC ? 'HEVC / H.265' : mediaInfo.formatLabel);
+          }
+        }
+
+        if (playerState === cast.framework.messages.PlayerState.BUFFERING) {
+          loaderStatus.textContent = 'Buffering…';
+          if (bufferingOverlayTimer) {
+            clearTimeout(bufferingOverlayTimer);
+          }
+          bufferingOverlayTimer = setTimeout(() => {
+            const currentState = playerManager.getPlayerState();
+            if (currentState === cast.framework.messages.PlayerState.BUFFERING) {
+              showLoading('Buffering…');
+            }
+          }, 3000);
+        } else {
+          if (bufferingOverlayTimer) {
+            clearTimeout(bufferingOverlayTimer);
+            bufferingOverlayTimer = null;
+          }
+          if (playerState !== cast.framework.messages.PlayerState.IDLE) {
+            hideLoading();
+          }
+        }
+      }
+    );
+
+    playerManager.addEventListener(
+      cast.framework.events.EventType.PLAYER_LOAD_COMPLETE,
+      () => {
+        console.log('[Receiver] Player loaded successfully.');
+        hideLoading();
+      }
+    );
+
+    playerManager.addEventListener(
+      cast.framework.events.EventType.ERROR,
+      (event) => {
+        console.error('[Receiver] Playback error:', event);
+        const code = event && (event.detailedErrorCode || (event.error && event.error.code))
+          ? (event.detailedErrorCode || event.error.code)
+          : 'UNKNOWN';
+        showError(`Playback failed (code: ${code}). Check that the stream URL and media format are supported.`);
+      }
+    );
+
+    playerManager.addEventListener(
+      cast.framework.events.EventType.SESSION_STATE_CHANGED,
+      (event) => {
+        console.log('[Receiver] Session state:', event.state);
+      }
+    );
+
+    context.start({ playbackConfig });
+
+    console.log('[Receiver] Custom Cast Receiver started.');
+    console.log('[Receiver] Supported formats: MP4, MKV, HLS, DASH, WebM, OGG.');
+  </script>
+</body>
+</html>
