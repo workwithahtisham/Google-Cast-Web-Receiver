@@ -5,8 +5,12 @@
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "Cache-Control", "value": "no-store, max-age=0" },
-        { "key": "Access-Control-Allow-Origin", "value": "*" }
+        { "key": "Cache-Control",                   "value": "no-store, max-age=0" },
+        { "key": "Access-Control-Allow-Origin",     "value": "*" },
+        { "key": "Access-Control-Allow-Methods",    "value": "GET, HEAD, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers",    "value": "Range, Content-Type" },
+        { "key": "Access-Control-Expose-Headers",   "value": "Content-Length, Content-Range" },
+        { "key": "X-Content-Type-Options",          "value": "nosniff" }
       ]
     }
   ]
