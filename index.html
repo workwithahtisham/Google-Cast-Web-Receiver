@@ -242,10 +242,17 @@ context.addEventListener(
 );
 
 context.addEventListener(
-  cast.framework.system.EventType.SHUTDOWN,
+  cast.framework.system.EventType.SENDER_DISCONNECTED,
   () => console.log('Receiver Shutdown')
 );
-
+  
+context.addEventListener(
+  cast.framework.system.EventType.READY,
+  () => {
+    console.log('Receiver Ready');
+    showLoading('Ready — waiting for content…');
+  }
+);
 /* =========================
    START RECEIVER
 ========================= */
