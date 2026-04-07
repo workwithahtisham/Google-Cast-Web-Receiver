@@ -5,775 +5,323 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cast Receiver</title>
   <link rel="icon" href="data:,">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 
   <style>
-    :root {
-      --accent: #00d4ff;
-      --accent-dim: rgba(0, 212, 255, 0.15);
-      --accent-glow: rgba(0, 212, 255, 0.35);
-      --white: #ffffff;
-      --white-60: rgba(255,255,255,0.6);
-      --white-30: rgba(255,255,255,0.3);
-      --white-10: rgba(255,255,255,0.08);
-      --black: #000000;
-      --surface: #0c0c0f;
-      --error: #ff4d6a;
-      --warning: #ffb347;
-      --success: #00e5a0;
-      --font-ui: 'DM Sans', sans-serif;
-      --font-mono: 'DM Mono', monospace;
-    }
-
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
     html, body {
       width: 100%; height: 100%;
-      background: var(--black);
+      background: #000;
       overflow: hidden;
-      font-family: var(--font-ui);
-      -webkit-font-smoothing: antialiased;
+      font-family: Arial, sans-serif;
     }
 
-    /* ── Cast Player ── */
+    /* ── The player MUST be the base layer, never covered ── */
     cast-media-player {
+      position: fixed;
+      top: 0; left: 0;
       width: 100%; height: 100%;
       display: block;
+      z-index: 1;
       --theme-hue: 195;
-      --progress-color: var(--accent);
+      --progress-color: #00d4ff;
       --splash-image: none;
       --splash-color: #000000;
     }
 
-    /* ── Idle / Ambient Screen ── */
-    #idle-screen {
-      position: absolute;
-      inset: 0;
-      background: var(--black);
+    /* ── All overlays sit above but ONLY shown when needed ── */
+    .overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 10;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      z-index: 50;
-      opacity: 1;
-      transition: opacity 0.8s ease;
+      pointer-events: none; /* never block touch/input on player */
     }
 
-    #idle-screen.hidden {
-      opacity: 0;
+    /* Hidden state */
+    .overlay.hidden {
+      display: none;
+    }
+
+    /* ── Idle Screen ── */
+    #idle-screen {
+      background: #000;
+    }
+
+    .idle-logo {
+      font-size: 24px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 32px;
+    }
+
+    .cast-ring {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 2px solid rgba(0,212,255,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: ringPulse 2s ease-in-out infinite;
+    }
+
+    @keyframes ringPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0,212,255,0.3); }
+      50%       { box-shadow: 0 0 0 20px rgba(0,212,255,0); }
+    }
+
+    .cast-ring svg {
+      width: 32px; height: 32px;
+      fill: #00d4ff;
+    }
+
+    .idle-label {
+      margin-top: 20px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.5);
+    }
+
+    #idle-clock {
+      position: fixed;
+      bottom: 48px;
+      right: 56px;
+      text-align: right;
       pointer-events: none;
     }
 
-    .ambient-bg {
-      position: absolute;
-      inset: 0;
-      background:
-        radial-gradient(ellipse 60% 50% at 20% 50%, rgba(0,212,255,0.06) 0%, transparent 70%),
-        radial-gradient(ellipse 40% 60% at 80% 30%, rgba(0,180,220,0.04) 0%, transparent 60%);
-      animation: ambientShift 12s ease-in-out infinite alternate;
-    }
-
-    @keyframes ambientShift {
-      0%   { opacity: 0.6; transform: scale(1); }
-      100% { opacity: 1;   transform: scale(1.04); }
-    }
-
-    .idle-content {
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 32px;
-    }
-
-    .app-logo {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
-
-    .logo-icon {
-      width: 48px;
-      height: 48px;
-      border-radius: 14px;
-      background: var(--accent-dim);
-      border: 1px solid rgba(0,212,255,0.3);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .logo-icon svg {
-      width: 24px;
-      height: 24px;
-      fill: var(--accent);
-    }
-
-    .logo-wordmark {
-      font-size: 22px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      color: var(--white);
-      text-transform: uppercase;
-    }
-
-    .cast-prompt {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .cast-icon-wrap {
-      width: 64px;
-      height: 64px;
-      border-radius: 50%;
-      background: var(--accent-dim);
-      border: 1px solid rgba(0,212,255,0.25);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      animation: pulse 2.4s ease-in-out infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
-      50%       { box-shadow: 0 0 0 16px transparent; }
-    }
-
-    .cast-icon-wrap svg {
-      width: 28px;
-      height: 28px;
-      fill: var(--accent);
-    }
-
-    .cast-label {
-      font-size: 15px;
-      font-weight: 400;
-      color: var(--white-60);
-      letter-spacing: 0.02em;
-    }
-
-    /* Clock in idle */
-    #idle-clock {
-      position: absolute;
-      bottom: 52px;
-      right: 60px;
-      text-align: right;
-    }
-
-    #idle-clock .time {
-      font-family: var(--font-mono);
-      font-size: 48px;
-      font-weight: 400;
-      color: var(--white);
+    #clock-time {
+      font-size: 52px;
+      font-weight: 300;
+      color: #fff;
       letter-spacing: -0.02em;
       line-height: 1;
     }
 
-    #idle-clock .date {
+    #clock-date {
       font-size: 13px;
-      font-weight: 400;
-      color: var(--white-30);
-      letter-spacing: 0.06em;
-      margin-top: 6px;
+      color: rgba(255,255,255,0.4);
+      letter-spacing: 0.08em;
       text-transform: uppercase;
+      margin-top: 6px;
     }
 
     /* ── Loading Overlay ── */
     #loading-overlay {
-      position: absolute;
-      inset: 0;
-      background: var(--black);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      z-index: 100;
-      opacity: 1;
-      transition: opacity 0.5s ease;
+      background: #000;
     }
 
-    #loading-overlay.hidden {
-      opacity: 0;
-      pointer-events: none;
-    }
-
-    .loading-inner {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 20px;
-    }
-
-    /* Arc spinner */
     .spinner {
-      width: 52px;
-      height: 52px;
-      position: relative;
+      width: 48px; height: 48px;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: #00d4ff;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin-bottom: 16px;
     }
 
-    .spinner svg {
-      width: 100%;
-      height: 100%;
-      animation: spinnerRotate 1.2s linear infinite;
-    }
-
-    @keyframes spinnerRotate {
-      to { transform: rotate(360deg); }
-    }
-
-    .spinner-track {
-      fill: none;
-      stroke: var(--white-10);
-      stroke-width: 3;
-    }
-
-    .spinner-arc {
-      fill: none;
-      stroke: var(--accent);
-      stroke-width: 3;
-      stroke-linecap: round;
-      stroke-dasharray: 60 100;
-    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     #loader-status {
       font-size: 14px;
-      font-weight: 400;
-      color: var(--white-60);
-      letter-spacing: 0.04em;
-    }
-
-    /* Progress bar for loading */
-    .load-bar {
-      width: 180px;
-      height: 2px;
-      background: var(--white-10);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-
-    .load-bar-fill {
-      height: 100%;
-      background: var(--accent);
-      border-radius: 2px;
-      width: 0%;
-      animation: loadSweep 1.8s ease-in-out infinite;
-    }
-
-    @keyframes loadSweep {
-      0%   { width: 0%;   margin-left: 0%; }
-      50%  { width: 60%;  margin-left: 20%; }
-      100% { width: 0%;   margin-left: 100%; }
+      color: rgba(255,255,255,0.55);
     }
 
     /* ── Error Overlay ── */
     #error-overlay {
-      position: absolute;
-      inset: 0;
-      background: var(--surface);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 16px;
-      z-index: 200;
+      background: #0a0a0a;
     }
-
-    #error-overlay.visible { display: flex; }
 
     .error-icon {
-      width: 56px;
-      height: 56px;
-      border-radius: 50%;
-      background: rgba(255,77,106,0.12);
-      border: 1px solid rgba(255,77,106,0.3);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 4px;
-    }
-
-    .error-icon svg {
-      width: 24px; height: 24px;
-      stroke: var(--error);
-      fill: none;
-      stroke-width: 2;
-      stroke-linecap: round;
+      font-size: 40px;
+      margin-bottom: 16px;
     }
 
     .error-title {
       font-size: 20px;
-      font-weight: 500;
-      color: var(--white);
-      letter-spacing: -0.01em;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 8px;
     }
 
-    .error-message {
+    .error-msg {
       font-size: 14px;
-      font-weight: 400;
-      color: var(--white-60);
-      max-width: 400px;
+      color: rgba(255,255,255,0.55);
       text-align: center;
+      max-width: 400px;
       line-height: 1.6;
     }
 
     .error-code {
-      font-family: var(--font-mono);
+      margin-top: 10px;
       font-size: 11px;
-      color: var(--white-30);
-      margin-top: 4px;
+      font-family: monospace;
+      color: rgba(255,255,255,0.25);
     }
 
-    /* ── HUD (top-left info while playing) ── */
+    /* ── HUD pills — float above player, never block it ── */
     #hud {
-      position: absolute;
-      top: 28px;
-      left: 36px;
+      position: fixed;
+      top: 24px;
+      left: 32px;
+      z-index: 20;
       display: flex;
-      flex-direction: column;
-      gap: 6px;
-      z-index: 30;
+      gap: 8px;
+      pointer-events: none;
       opacity: 0;
       transition: opacity 0.4s;
-      pointer-events: none;
     }
 
     #hud.visible { opacity: 1; }
 
-    .hud-tag {
-      display: inline-flex;
+    .hud-pill {
+      display: flex;
       align-items: center;
       gap: 6px;
       padding: 4px 10px;
-      background: rgba(0,0,0,0.55);
-      backdrop-filter: blur(8px);
-      border: 1px solid var(--white-10);
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.1);
       border-radius: 20px;
       font-size: 11px;
-      font-family: var(--font-mono);
-      color: var(--white-60);
-      width: fit-content;
+      color: rgba(255,255,255,0.7);
+      font-family: monospace;
+      letter-spacing: 0.05em;
     }
 
-    .hud-dot {
-      width: 6px;
-      height: 6px;
+    .live-dot {
+      width: 6px; height: 6px;
       border-radius: 50%;
-      background: var(--accent);
-      animation: blink 1.6s ease-in-out infinite;
+      background: #00d4ff;
+      animation: blink 1.8s ease-in-out infinite;
     }
 
     @keyframes blink {
       0%, 100% { opacity: 1; }
-      50%       { opacity: 0.3; }
-    }
-
-    /* ── Sender Info Banner (bottom-left) ── */
-    #sender-banner {
-      position: absolute;
-      bottom: 36px;
-      left: 40px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 16px;
-      background: rgba(0,0,0,0.6);
-      backdrop-filter: blur(12px);
-      border: 1px solid var(--white-10);
-      border-radius: 12px;
-      z-index: 30;
-      opacity: 0;
-      transform: translateY(8px);
-      transition: opacity 0.4s ease, transform 0.4s ease;
-      pointer-events: none;
-    }
-
-    #sender-banner.visible {
-      opacity: 1;
-      transform: translateY(0);
-    }
-
-    .sender-avatar {
-      width: 28px;
-      height: 28px;
-      border-radius: 50%;
-      background: var(--accent-dim);
-      border: 1px solid rgba(0,212,255,0.3);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      color: var(--accent);
-      font-weight: 600;
-    }
-
-    .sender-info { display: flex; flex-direction: column; }
-
-    .sender-label {
-      font-size: 10px;
-      color: var(--white-30);
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-
-    .sender-name {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--white);
-    }
-
-    /* ── Buffering overlay (subtle) ── */
-    #buffer-overlay {
-      position: absolute;
-      bottom: 36px;
-      right: 40px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 14px;
-      background: rgba(0,0,0,0.55);
-      backdrop-filter: blur(8px);
-      border: 1px solid var(--white-10);
-      border-radius: 20px;
-      z-index: 30;
-      opacity: 0;
-      transition: opacity 0.3s;
-      pointer-events: none;
-    }
-
-    #buffer-overlay.visible { opacity: 1; }
-
-    .buffer-spinner {
-      width: 14px; height: 14px;
-    }
-
-    .buffer-spinner svg {
-      animation: spinnerRotate 0.9s linear infinite;
-    }
-
-    .buffer-label {
-      font-size: 12px;
-      font-family: var(--font-mono);
-      color: var(--white-60);
-    }
-
-    /* ── Volume indicator ── */
-    #volume-indicator {
-      position: absolute;
-      top: 28px;
-      right: 36px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 12px;
-      background: rgba(0,0,0,0.55);
-      backdrop-filter: blur(8px);
-      border: 1px solid var(--white-10);
-      border-radius: 20px;
-      z-index: 30;
-      opacity: 0;
-      transition: opacity 0.3s;
-      pointer-events: none;
-    }
-
-    #volume-indicator.visible { opacity: 1; }
-
-    .vol-bars {
-      display: flex;
-      align-items: flex-end;
-      gap: 2px;
-      height: 14px;
-    }
-
-    .vol-bar {
-      width: 3px;
-      border-radius: 2px;
-      background: var(--accent);
-      transition: height 0.2s;
-    }
-
-    .vol-label {
-      font-size: 12px;
-      font-family: var(--font-mono);
-      color: var(--white-60);
-    }
-
-    /* ── Artwork / Title for non-video content ── */
-    #media-info {
-      position: absolute;
-      inset: 0;
-      background: var(--black);
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 28px;
-      z-index: 20;
-    }
-
-    #media-info.visible { display: flex; }
-
-    .media-artwork {
-      width: 220px;
-      height: 220px;
-      border-radius: 16px;
-      object-fit: cover;
-      background: var(--white-10);
-      box-shadow: 0 32px 80px rgba(0,0,0,0.6);
-    }
-
-    .media-artwork-placeholder {
-      width: 220px;
-      height: 220px;
-      border-radius: 16px;
-      background: var(--white-10);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-
-    .media-artwork-placeholder svg {
-      width: 48px;
-      height: 48px;
-      fill: var(--white-30);
-    }
-
-    .media-title {
-      font-size: 26px;
-      font-weight: 500;
-      color: var(--white);
-      text-align: center;
-      max-width: 600px;
-      line-height: 1.3;
-    }
-
-    .media-subtitle {
-      font-size: 15px;
-      color: var(--white-60);
-      text-align: center;
+      50%       { opacity: 0.2; }
     }
   </style>
 </head>
 
 <body>
 
-<!-- Cast Media Player (handles video) -->
-<cast-media-player></cast-media-player>
+  <!-- 1. Player — always at base, NEVER hidden or covered -->
+  <cast-media-player></cast-media-player>
 
-<!-- Audio/metadata media info -->
-<div id="media-info">
-  <div class="media-artwork-placeholder">
-    <svg viewBox="0 0 24 24"><path d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6z"/></svg>
-  </div>
-  <div class="media-title" id="media-title-text">Unknown Title</div>
-  <div class="media-subtitle" id="media-subtitle-text"></div>
-</div>
-
-<!-- Idle screen (shown when no content is casting) -->
-<div id="idle-screen">
-  <div class="ambient-bg"></div>
-  <div class="idle-content">
-    <div class="app-logo">
-      <div class="logo-icon">
-        <svg viewBox="0 0 24 24"><path d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9 14l-5-5 1.41-1.41L12 14.17l7.59-7.59L21 8l-9 9z"/></svg>
-      </div>
-      <span class="logo-wordmark">Cast Receiver</span>
-    </div>
-    <div class="cast-prompt">
-      <div class="cast-icon-wrap">
-        <!-- Cast icon -->
-        <svg viewBox="0 0 24 24"><path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm18-7H5v1.63c3.96 1.28 7.09 4.41 8.37 8.37H19V7zm0 11h-3.05c-.38-2.04-1.36-3.87-2.76-5.28L14.62 14 16 15.38 13 18.38l-3-3L12.62 13c1.4 1.41 2.38 3.23 2.76 5.27H19v-3zm2-16H3C1.9 2 1 2.9 1 4v3h2V4h18v16h-7v2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
-      </div>
-      <span class="cast-label">Ready to receive</span>
-    </div>
-  </div>
-  <!-- Live clock -->
-  <div id="idle-clock">
-    <div class="time" id="clock-time">--:--</div>
-    <div class="date" id="clock-date"></div>
-  </div>
-</div>
-
-<!-- Loading overlay -->
-<div id="loading-overlay">
-  <div class="loading-inner">
-    <div class="spinner">
-      <svg viewBox="0 0 52 52">
-        <circle class="spinner-track" cx="26" cy="26" r="22"/>
-        <circle class="spinner-arc"   cx="26" cy="26" r="22"/>
+  <!-- 2. Idle screen — shown only when no content is playing -->
+  <div id="idle-screen" class="overlay">
+    <div class="idle-logo">Cast Receiver</div>
+    <div class="cast-ring">
+      <svg viewBox="0 0 24 24">
+        <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2a9 9 0 0 1 9 9h2C12 12.37 7.63 8 2 8zm18-7H3C1.9 2 1 2.9 1 4v3h2V4h18v16h-7v2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
       </svg>
     </div>
-    <div id="loader-status">Preparing…</div>
-    <div class="load-bar"><div class="load-bar-fill"></div></div>
+    <div class="idle-label">Ready to receive</div>
+    <div id="idle-clock">
+      <div id="clock-time">00:00</div>
+      <div id="clock-date"></div>
+    </div>
   </div>
-</div>
 
-<!-- Error overlay -->
-<div id="error-overlay">
-  <div class="error-icon">
-    <svg viewBox="0 0 24 24"><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/><circle cx="12" cy="12" r="9"/></svg>
+  <!-- 3. Loading — shown only while media is preparing (before first frame) -->
+  <div id="loading-overlay" class="overlay hidden">
+    <div class="spinner"></div>
+    <div id="loader-status">Loading…</div>
   </div>
-  <div class="error-title">Playback Error</div>
-  <div class="error-message" id="error-message">Unable to play the requested media.</div>
-  <div class="error-code" id="error-code"></div>
-</div>
 
-<!-- HUD — top left live badge -->
-<div id="hud">
-  <div class="hud-tag">
-    <span class="hud-dot"></span>
-    <span id="hud-state">LIVE</span>
+  <!-- 4. Error — shown only on failure -->
+  <div id="error-overlay" class="overlay hidden">
+    <div class="error-icon">⚠️</div>
+    <div class="error-title">Playback Error</div>
+    <div class="error-msg" id="error-msg">Unable to play this media.</div>
+    <div class="error-code" id="error-code"></div>
   </div>
-  <div class="hud-tag" id="hud-codec" style="display:none"></div>
-</div>
 
-<!-- Sender banner — bottom left -->
-<div id="sender-banner">
-  <div class="sender-avatar" id="sender-avatar">?</div>
-  <div class="sender-info">
-    <span class="sender-label">Casting from</span>
-    <span class="sender-name" id="sender-name">Unknown Device</span>
+  <!-- 5. HUD pills — float above player, pointer-events none so player still works -->
+  <div id="hud">
+    <div class="hud-pill">
+      <span class="live-dot"></span>
+      <span id="hud-state">PLAYING</span>
+    </div>
+    <div class="hud-pill" id="hud-format" style="display:none"></div>
   </div>
-</div>
-
-<!-- Buffering indicator — bottom right -->
-<div id="buffer-overlay">
-  <div class="buffer-spinner">
-    <svg viewBox="0 0 14 14">
-      <circle cx="7" cy="7" r="5" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2"/>
-      <circle cx="7" cy="7" r="5" fill="none" stroke="#00d4ff" stroke-width="2" stroke-dasharray="12 20" stroke-linecap="round"/>
-    </svg>
-  </div>
-  <span class="buffer-label">Buffering</span>
-</div>
-
-<!-- Volume indicator — top right -->
-<div id="volume-indicator">
-  <div class="vol-bars" id="vol-bars">
-    <div class="vol-bar" style="height:4px"></div>
-    <div class="vol-bar" style="height:8px"></div>
-    <div class="vol-bar" style="height:12px"></div>
-    <div class="vol-bar" style="height:6px"></div>
-  </div>
-  <span class="vol-label" id="vol-label">100%</span>
-</div>
 
 <script>
-/* ============================================================
-   CAST RECEIVER — Production Ready
-   Features:
-   - Load interceptor with MIME detection
-   - Idle screen with live clock
-   - Loading / buffering / error states
-   - HUD with playback state
-   - Sender info banner
-   - Volume change indicator
-   - Media title display (audio/non-video)
-   - Seek / skip message interceptors
-   - Graceful sender disconnect handling
-   - Subtitle / track support passthrough
-============================================================ */
+/* ==============================================
+   CAST RECEIVER — v2.0 Fixed
+   Key rules:
+   1. cast-media-player is NEVER hidden
+   2. Overlays only show when there is NO video
+   3. During playback ALL overlays are hidden
+   4. Buffering uses the player's built-in UI
+============================================== */
 
-const context       = cast.framework.CastReceiverContext.getInstance();
-const playerManager = context.getPlayerManager();
+const context        = cast.framework.CastReceiverContext.getInstance();
+const playerManager  = context.getPlayerManager();
 const playbackConfig = new cast.framework.PlaybackConfig();
 
-/* -- UI refs -- */
 const idleScreen     = document.getElementById('idle-screen');
 const loadingOverlay = document.getElementById('loading-overlay');
 const loaderStatus   = document.getElementById('loader-status');
 const errorOverlay   = document.getElementById('error-overlay');
-const errorMessage   = document.getElementById('error-message');
+const errorMsg       = document.getElementById('error-msg');
 const errorCode      = document.getElementById('error-code');
 const hud            = document.getElementById('hud');
 const hudState       = document.getElementById('hud-state');
-const hudCodec       = document.getElementById('hud-codec');
-const senderBanner   = document.getElementById('sender-banner');
-const senderName     = document.getElementById('sender-name');
-const senderAvatar   = document.getElementById('sender-avatar');
-const bufferOverlay  = document.getElementById('buffer-overlay');
-const volIndicator   = document.getElementById('volume-indicator');
-const volLabel       = document.getElementById('vol-label');
-const volBars        = document.getElementById('vol-bars');
-const mediaInfo      = document.getElementById('media-info');
-const mediaTitleEl   = document.getElementById('media-title-text');
-const mediaSubEl     = document.getElementById('media-subtitle-text');
+const hudFormat      = document.getElementById('hud-format');
 
-/* -- State -- */
-let volTimer = null;
-let senderBannerTimer = null;
-let connectedSenders = 0;
+let hasStartedPlaying = false; // track if we've ever played this session
 
-/* ── Helpers ── */
-
-function showIdle() {
-  idleScreen.classList.remove('hidden');
-  hud.classList.remove('visible');
-  mediaInfo.classList.remove('visible');
-}
-
-function hideIdle() {
+// --- Single state machine: only one screen at a time ---
+function showState(state, opts = {}) {
   idleScreen.classList.add('hidden');
-}
-
-function showLoading(msg) {
-  loaderStatus.textContent = msg || 'Loading…';
-  loadingOverlay.classList.remove('hidden');
-  hideIdle();
-}
-
-function hideLoading() {
   loadingOverlay.classList.add('hidden');
-}
-
-function showError(msg, code) {
-  hideLoading();
-  errorMessage.textContent = msg || 'Unable to play the requested media.';
-  errorCode.textContent = code ? `Error code: ${code}` : '';
-  errorOverlay.classList.add('visible');
+  errorOverlay.classList.add('hidden');
   hud.classList.remove('visible');
+
+  switch (state) {
+    case 'idle':
+      hasStartedPlaying = false;
+      idleScreen.classList.remove('hidden');
+      break;
+
+    case 'loading':
+      // Only show loading overlay before playback starts
+      if (!hasStartedPlaying) {
+        loadingOverlay.classList.remove('hidden');
+        loaderStatus.textContent = opts.msg || 'Loading…';
+      }
+      break;
+
+    case 'playing':
+      hasStartedPlaying = true;
+      // ALL overlays hidden — video is fully visible
+      hudState.textContent = 'PLAYING';
+      hud.classList.add('visible');
+      break;
+
+    case 'paused':
+      // Video is still visible — just update HUD label
+      hudState.textContent = 'PAUSED';
+      hud.classList.add('visible');
+      break;
+
+    case 'error':
+      hasStartedPlaying = false;
+      errorOverlay.classList.remove('hidden');
+      errorMsg.textContent  = opts.msg  || 'Unable to play this media.';
+      errorCode.textContent = opts.code ? `Code: ${opts.code}` : '';
+      break;
+  }
 }
 
-function hideError() {
-  errorOverlay.classList.remove('visible');
-}
-
-function showBuffering(show) {
-  bufferOverlay.classList.toggle('visible', show);
-}
-
-function setHudState(label) {
-  hudState.textContent = label;
-  hud.classList.add('visible');
-}
-
-function showVolume(level) {
-  const pct = Math.round(level * 100);
-  volLabel.textContent = `${pct}%`;
-
-  // Animate bars relative to volume
-  const bars = volBars.querySelectorAll('.vol-bar');
-  const heights = [4, 8, 12, 6].map(h => Math.max(2, Math.round(h * level)));
-  bars.forEach((b, i) => b.style.height = heights[i] + 'px');
-
-  volIndicator.classList.add('visible');
-  clearTimeout(volTimer);
-  volTimer = setTimeout(() => volIndicator.classList.remove('visible'), 2500);
-}
-
-function showSenderBanner(name) {
-  const initial = (name || '?')[0].toUpperCase();
-  senderAvatar.textContent = initial;
-  senderName.textContent = name || 'Unknown Device';
-  senderBanner.classList.add('visible');
-  clearTimeout(senderBannerTimer);
-  senderBannerTimer = setTimeout(() => senderBanner.classList.remove('visible'), 5000);
-}
-
-/* ── MIME detection ── */
+// --- MIME detection ---
 function detectMime(url) {
   const u = (url || '').split('?')[0].toLowerCase();
   if (u.endsWith('.m3u8'))  return 'application/x-mpegURL';
@@ -782,179 +330,109 @@ function detectMime(url) {
   if (u.endsWith('.mkv'))   return 'video/x-matroska';
   if (u.endsWith('.mp3'))   return 'audio/mpeg';
   if (u.endsWith('.aac'))   return 'audio/aac';
-  if (u.endsWith('.ogg'))   return 'audio/ogg';
-  if (u.endsWith('.flac'))  return 'audio/flac';
   return 'video/mp4';
 }
 
-function isAudio(mime) {
-  return mime && mime.startsWith('audio/');
-}
-
-/* ── Clock ── */
+// --- Clock ---
 function updateClock() {
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mm = String(now.getMinutes()).padStart(2, '0');
+  const now  = new Date();
+  const hh   = String(now.getHours()).padStart(2, '0');
+  const mm   = String(now.getMinutes()).padStart(2, '0');
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   document.getElementById('clock-time').textContent = `${hh}:${mm}`;
-
-  const days   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   document.getElementById('clock-date').textContent =
-    `${days[now.getDay()]}, ${months[now.getMonth()]} ${now.getDate()}`;
+    `${days[now.getDay()]} ${mons[now.getMonth()]} ${now.getDate()}`;
 }
 updateClock();
-setInterval(updateClock, 10000);
+setInterval(updateClock, 15000);
 
-/* ═══════════════════════════════════════
-   LOAD INTERCEPTOR
-═══════════════════════════════════════ */
+/* ── LOAD INTERCEPTOR ── */
 playerManager.setMessageInterceptor(
   cast.framework.messages.MessageType.LOAD,
   (request) => {
     const media = request.media;
 
-    // Fallback contentUrl from contentId
     if (!media.contentUrl && media.contentId) {
       media.contentUrl = media.contentId;
     }
 
-    // Auto-detect MIME type
     if (!media.contentType) {
       media.contentType = detectMime(media.contentUrl);
     }
 
-    // Strip query params from codec badge
-    const codecLabel = media.contentType.split('/')[1]?.toUpperCase() || 'VIDEO';
-    hudCodec.textContent = codecLabel;
-    hudCodec.style.display = 'flex';
+    const fmt = media.contentType.split('/')[1]?.toUpperCase() || 'VIDEO';
+    hudFormat.textContent = fmt;
+    hudFormat.style.display = 'flex';
 
-    // For audio content, show the media info panel
-    if (isAudio(media.contentType)) {
-      mediaTitleEl.textContent  = media.metadata?.title  || media.contentId || 'Audio';
-      mediaSubEl.textContent    = media.metadata?.artist || media.metadata?.subtitle || '';
-      mediaInfo.classList.add('visible');
-    } else {
-      mediaInfo.classList.remove('visible');
-    }
-
-    // Default playback config tweaks
-    playbackConfig.autoResumeDuration = 5; // seconds before auto-resume after network blip
-
-    hideError();
-    showLoading('Loading media…');
+    showState('loading', { msg: 'Loading media…' });
 
     return request;
   }
 );
 
-/* ═══════════════════════════════════════
-   PLAYER EVENTS
-═══════════════════════════════════════ */
-const EV  = cast.framework.events.EventType;
-const PS  = cast.framework.messages.PlayerState;
+/* ── PLAYER EVENTS ── */
+const EV = cast.framework.events.EventType;
+const PS = cast.framework.messages.PlayerState;
 
 playerManager.addEventListener(EV.MEDIA_STATUS, (event) => {
   if (!event.mediaStatus) return;
   const state = event.mediaStatus.playerState;
 
-  switch (state) {
-    case PS.PLAYING:
-      hideLoading();
-      hideIdle();
-      showBuffering(false);
-      setHudState('LIVE');
-      break;
-
-    case PS.PAUSED:
-      hideLoading();
-      showBuffering(false);
-      setHudState('PAUSED');
-      break;
-
-    case PS.BUFFERING:
-      showBuffering(true);
-      showLoading('Buffering…');
-      break;
-
-    case PS.IDLE:
-      showBuffering(false);
-      hud.classList.remove('visible');
-      break;
+  if (state === PS.PLAYING) {
+    // This is the critical one — hide ALL overlays
+    showState('playing');
+  } else if (state === PS.PAUSED) {
+    showState('paused');
+  } else if (state === PS.BUFFERING) {
+    // Do NOT show our loading overlay — let cast-media-player handle buffering UI
+    // Only show loading if we haven't played yet
+    if (!hasStartedPlaying) {
+      loaderStatus.textContent = 'Buffering…';
+    }
+  } else if (state === PS.IDLE) {
+    const reason = event.mediaStatus.idleReason;
+    if (reason === 'FINISHED' || reason === 'CANCELLED' || reason === 'ERROR') {
+      showState('idle');
+    }
   }
 });
 
+// This fires when media is fully loaded and ready — most reliable signal
 playerManager.addEventListener(EV.PLAYER_LOAD_COMPLETE, () => {
-  hideLoading();
-  hideIdle();
-  setHudState('LIVE');
+  console.log('[Receiver] Load complete — showing video');
+  showState('playing');
 });
 
 playerManager.addEventListener(EV.ERROR, (event) => {
-  console.error('[Receiver] Error:', event);
-  const code = event.detailedErrorCode || event.error?.detailedErrorCode;
-  showError('Playback failed. Please try again.', code);
-  showIdle();
+  console.error('[Receiver] Error:', JSON.stringify(event));
+  showState('error', {
+    msg: 'Could not play this media. Check the URL or format.',
+    code: event.detailedErrorCode || ''
+  });
 });
 
 playerManager.addEventListener(EV.ENDED, () => {
-  console.log('[Receiver] Media ended');
-  hud.classList.remove('visible');
-  showIdle();
+  showState('idle');
 });
 
-/* Volume events */
-playerManager.addEventListener(EV.MEDIA_STATUS, (event) => {
-  const status = event.mediaStatus;
-  if (status && status.volume && status.volume.level !== undefined) {
-    showVolume(status.volume.level);
-  }
-});
-
-/* ═══════════════════════════════════════
-   CONTEXT / SYSTEM EVENTS
-═══════════════════════════════════════ */
+/* ── CONTEXT EVENTS ── */
 context.addEventListener(cast.framework.system.EventType.READY, () => {
   console.log('[Receiver] Ready');
-  showIdle();
+  showState('idle');
 });
 
-context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, (event) => {
-  connectedSenders++;
-  console.log('[Receiver] Sender connected:', event.senderId);
-  showSenderBanner(event.userAgent || event.senderId || 'iOS Device');
+context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, (e) => {
+  console.log('[Receiver] Sender connected:', e.senderId);
 });
 
-context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (event) => {
-  connectedSenders = Math.max(0, connectedSenders - 1);
-  console.log('[Receiver] Sender disconnected:', event.senderId, '| Remaining:', connectedSenders);
-
-  if (connectedSenders === 0) {
-    // No senders left — show idle after brief delay
-    setTimeout(() => {
-      if (connectedSenders === 0) {
-        playerManager.stop();
-        showIdle();
-        hideLoading();
-      }
-    }, 3000);
-  }
+context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (e) => {
+  console.log('[Receiver] Sender disconnected:', e.senderId);
 });
 
-context.addEventListener(cast.framework.system.EventType.MAX_VIDEO_RESOLUTION_CHANGED, (event) => {
-  console.log('[Receiver] Max resolution changed:', event.height);
-});
-
-/* ═══════════════════════════════════════
-   START RECEIVER
-═══════════════════════════════════════ */
-context.start({
-  playbackConfig,
-  touchScreenOptimizedApp: false,
-  disableIdleTimeout: false,       // Let Chromecast manage its own idle timeout
-});
-
-console.log('[Receiver] Custom Receiver Started — v1.0.0');
+/* ── START ── */
+context.start({ playbackConfig });
+console.log('[Receiver] Started v2.0');
 </script>
 
 </body>
