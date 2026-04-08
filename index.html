@@ -25,8 +25,7 @@
 
     video {
       position: fixed;
-      top: 0;
-      left: 0;
+      inset: 0;
       width: 100%;
       height: 100%;
       display: block;
@@ -37,10 +36,7 @@
 
     .overlay {
       position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
+      inset: 0;
       z-index: 10;
       display: flex;
       flex-direction: column;
@@ -161,7 +157,7 @@
       font-size: 14px;
       color: rgba(255,255,255,0.55);
       text-align: center;
-      max-width: 400px;
+      max-width: 420px;
       line-height: 1.6;
     }
 
@@ -181,7 +177,7 @@
       gap: 8px;
       pointer-events: none;
       opacity: 0;
-      transition: opacity 0.4s;
+      transition: opacity 0.3s;
     }
 
     #hud.visible {
@@ -218,7 +214,6 @@
 </head>
 
 <body>
-
   <video id="video" playsinline autoplay></video>
 
   <div id="idle-screen" class="overlay">
@@ -271,9 +266,8 @@
     const hudFormat = document.getElementById('hud-format');
 
     let shakaPlayer = null;
-    let currentMediaInfo = null;
     let hasStartedPlaying = false;
-    let isShakaAttached = false;
+    let currentMediaInfo = null;
 
     function showState(state, opts = {}) {
       idleScreen.classList.add('hidden');
@@ -285,6 +279,7 @@
         case 'idle':
           hasStartedPlaying = false;
           idleScreen.classList.remove('hidden');
+          hudFormat.style.display = 'none';
           break;
 
         case 'loading':
@@ -336,7 +331,7 @@
       if (u.endsWith('.mp3')) return 'audio/mpeg';
       if (u.endsWith('.aac')) return 'audio/aac';
       if (u.endsWith('.m4a')) return 'audio/mp4';
-      if (u.endsWith('.mov')) return 'video/mp4';
+      if (u.endsWith('.mov')) return 'video/quicktime';
       return 'video/mp4';
     }
 
@@ -347,38 +342,32 @@
     }
 
     async function setupShaka() {
-      if (!shaka.Player.isBrowserSupported()) {
+      if (!window.shaka || !shaka.Player.isBrowserSupported()) {
         throw new Error('Shaka Player is not supported on this device.');
       }
 
       shakaPlayer = new shaka.Player();
+      await shakaPlayer.attach(video);
 
-      if (!isShakaAttached) {
-        await shakaPlayer.attach(video);
-        isShakaAttached = true;
-      }
+      shakaPlayer.addEventListener('error', (event) => {
+        const detail = event.detail || {};
+        console.error('[Receiver] Shaka error:', detail);
 
-      shakaPlayer.addEventListener('error', onShakaError);
-    }
+        showState('error', {
+          msg: 'Could not play this media.',
+          code: detail.code || ''
+        });
 
-    function onShakaError(event) {
-      const detail = event.detail || {};
-      console.error('[Receiver] Shaka error:', detail);
-
-      showState('error', {
-        msg: 'Could not play this media.',
-        code: detail.code || ''
+        try {
+          playerManager.sendError(
+            new cast.framework.messages.ErrorData(
+              cast.framework.messages.ErrorType.LOAD_FAILED
+            )
+          );
+        } catch (e) {
+          console.error('[Receiver] sendError failed:', e);
+        }
       });
-
-      try {
-        playerManager.sendError(
-          new cast.framework.messages.ErrorData(
-            cast.framework.messages.ErrorType.LOAD_FAILED
-          )
-        );
-      } catch (e) {
-        console.error('[Receiver] sendError failed:', e);
-      }
     }
 
     async function clearPlayback() {
@@ -386,17 +375,44 @@
         video.pause();
       } catch (_) {}
 
-      try {
-        if (shakaPlayer) {
+      if (shakaPlayer) {
+        try {
           await shakaPlayer.unload();
+        } catch (e) {
+          console.warn('[Receiver] Shaka unload warning:', e);
         }
-      } catch (e) {
-        console.warn('[Receiver] Shaka unload warning:', e);
       }
 
       video.removeAttribute('src');
       video.load();
       currentMediaInfo = null;
+    }
+
+    async function loadNativeVideo(url, startTime) {
+      return new Promise((resolve, reject) => {
+        const onLoadedMetadata = () => {
+          cleanup();
+          if (startTime > 0 && Number.isFinite(startTime)) {
+            try { video.currentTime = startTime; } catch (_) {}
+          }
+          resolve();
+        };
+
+        const onError = () => {
+          cleanup();
+          reject(new Error('Native video load failed'));
+        };
+
+        const cleanup = () => {
+          video.removeEventListener('loadedmetadata', onLoadedMetadata);
+          video.removeEventListener('error', onError);
+        };
+
+        video.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
+        video.addEventListener('error', onError, { once: true });
+        video.src = url;
+        video.load();
+      });
     }
 
     async function loadMedia(request) {
@@ -408,6 +424,12 @@
       }
 
       const contentType = media.contentType || detectMime(url);
+      const startTime = typeof request.currentTime === 'number' ? request.currentTime : 0;
+      const useShaka = (
+        contentType === 'application/x-mpegURL' ||
+        contentType === 'application/dash+xml'
+      );
+
       media.contentType = contentType;
       currentMediaInfo = media;
 
@@ -418,42 +440,10 @@
 
       await clearPlayback();
 
-      const startTime = typeof request.currentTime === 'number' ? request.currentTime : 0;
-      const useShaka =
-        contentType === 'application/x-mpegURL' ||
-        contentType === 'application/dash+xml';
-
       if (useShaka) {
         await shakaPlayer.load(url, startTime);
       } else {
-        video.src = url;
-
-        await new Promise((resolve, reject) => {
-          const onLoadedMetadata = () => {
-            cleanup();
-            resolve();
-          };
-
-          const onError = () => {
-            cleanup();
-            reject(new Error('Native video load failed'));
-          };
-
-          const cleanup = () => {
-            video.removeEventListener('loadedmetadata', onLoadedMetadata);
-            video.removeEventListener('error', onError);
-          };
-
-          video.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
-          video.addEventListener('error', onError, { once: true });
-          video.load();
-        });
-
-        if (startTime > 0 && Number.isFinite(startTime)) {
-          try {
-            video.currentTime = startTime;
-          } catch (_) {}
-        }
+        await loadNativeVideo(url, startTime);
       }
 
       playerManager.setMediaInformation(media, true);
@@ -466,7 +456,7 @@
           await video.play();
           showState('playing');
         } catch (e) {
-          console.warn('[Receiver] Autoplay play() warning:', e);
+          console.warn('[Receiver] autoplay play() warning:', e);
           showState('paused');
         }
       }
@@ -482,6 +472,7 @@
           return request;
         } catch (e) {
           console.error('[Receiver] LOAD failed:', e);
+
           showState('error', {
             msg: 'Could not play this media. Check the URL or format.',
             code: e.message || ''
@@ -535,9 +526,7 @@
           }
 
           if (!video.paused) {
-            try {
-              await video.play();
-            } catch (_) {}
+            try { await video.play(); } catch (_) {}
           }
 
           return request;
@@ -567,12 +556,12 @@
       }
     );
 
-    video.addEventListener('playing', () => {
+    video.addEventListener('play', () => {
       showState('playing');
       try { playerManager.sendStatus(); } catch (_) {}
     });
 
-    video.addEventListener('play', () => {
+    video.addEventListener('playing', () => {
       showState('playing');
       try { playerManager.sendStatus(); } catch (_) {}
     });
@@ -651,7 +640,7 @@
       try {
         await setupShaka();
         context.start();
-        console.log('[Receiver] Custom Shaka receiver started');
+        console.log('[Receiver] Custom receiver started');
       } catch (e) {
         console.error('[Receiver] Startup failed:', e);
         showState('error', {
