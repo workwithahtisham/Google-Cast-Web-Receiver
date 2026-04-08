@@ -1,347 +1,184 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cast Receiver</title>
-  <link rel="icon" href="data:,">
-  <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-
+  <meta charset="utf-8" />
+  <title>Custom Cast Receiver with Shaka</title>
+  <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.compiled.js"></script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
     html, body {
-      width: 100%; height: 100%;
-      background: #000;
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: black;
       overflow: hidden;
-      font-family: Arial, sans-serif;
     }
-
-    cast-media-player {
-      position: fixed;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      display: block;
-      z-index: 1;
-      --theme-hue: 195;
-      --progress-color: #00d4ff;
-      --splash-image: none;
-      --splash-color: #000000;
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: black;
     }
-
-    .overlay {
-      position: fixed;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      z-index: 10;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      pointer-events: none;
-    }
-
-    .overlay.hidden { display: none; }
-
-    #idle-screen { background: #000; }
-
-    .idle-logo {
-      font-size: 24px;
-      font-weight: 700;
-      color: #fff;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      margin-bottom: 32px;
-    }
-
-    .cast-ring {
-      width: 72px; height: 72px;
-      border-radius: 50%;
-      border: 2px solid rgba(0,212,255,0.3);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      animation: ringPulse 2s ease-in-out infinite;
-    }
-
-    @keyframes ringPulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(0,212,255,0.3); }
-      50%       { box-shadow: 0 0 0 20px rgba(0,212,255,0); }
-    }
-
-    .cast-ring svg { width: 32px; height: 32px; fill: #00d4ff; }
-
-    .idle-label { margin-top: 20px; font-size: 14px; color: rgba(255,255,255,0.5); }
-
-    #idle-clock {
-      position: fixed;
-      bottom: 48px; right: 56px;
-      text-align: right;
-      pointer-events: none;
-    }
-
-    #clock-time {
-      font-size: 52px; font-weight: 300;
-      color: #fff; letter-spacing: -0.02em; line-height: 1;
-    }
-
-    #clock-date {
-      font-size: 13px; color: rgba(255,255,255,0.4);
-      letter-spacing: 0.08em; text-transform: uppercase; margin-top: 6px;
-    }
-
-    #loading-overlay { background: #000; }
-
-    .spinner {
-      width: 48px; height: 48px;
-      border: 3px solid rgba(255,255,255,0.1);
-      border-top-color: #00d4ff;
-      border-radius: 50%;
-      animation: spin 0.9s linear infinite;
-      margin-bottom: 16px;
-    }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    #loader-status { font-size: 14px; color: rgba(255,255,255,0.55); }
-
-    #error-overlay { background: #0a0a0a; }
-
-    .error-icon { font-size: 40px; margin-bottom: 16px; }
-    .error-title { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 8px; }
-    .error-msg {
-      font-size: 14px; color: rgba(255,255,255,0.55);
-      text-align: center; max-width: 400px; line-height: 1.6;
-    }
-    .error-code { margin-top: 10px; font-size: 11px; font-family: monospace; color: rgba(255,255,255,0.25); }
-
-    #hud {
-      position: fixed; top: 24px; left: 32px;
-      z-index: 20; display: flex; gap: 8px;
-      pointer-events: none; opacity: 0; transition: opacity 0.4s;
-    }
-    #hud.visible { opacity: 1; }
-
-    .hud-pill {
-      display: flex; align-items: center; gap: 6px;
-      padding: 4px 10px;
-      background: rgba(0,0,0,0.5);
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 20px;
-      font-size: 11px; color: rgba(255,255,255,0.7);
-      font-family: monospace; letter-spacing: 0.05em;
-    }
-
-    .live-dot {
-      width: 6px; height: 6px;
-      border-radius: 50%; background: #00d4ff;
-      animation: blink 1.8s ease-in-out infinite;
-    }
-
-    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
   </style>
 </head>
-
 <body>
+  <video id="video" autoplay playsinline></video>
 
-  <cast-media-player></cast-media-player>
+  <script>
+    const context = cast.framework.CastReceiverContext.getInstance();
+    const playerManager = context.getPlayerManager();
 
-  <div id="idle-screen" class="overlay">
-    <div class="idle-logo">Cast Receiver</div>
-    <div class="cast-ring">
-      <svg viewBox="0 0 24 24">
-        <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2a9 9 0 0 1 9 9h2C12 12.37 7.63 8 2 8zm18-7H3C1.9 2 1 2.9 1 4v3h2V4h18v16h-7v2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
-      </svg>
-    </div>
-    <div class="idle-label">Ready to receive</div>
-    <div id="idle-clock">
-      <div id="clock-time">00:00</div>
-      <div id="clock-date"></div>
-    </div>
-  </div>
+    const video = document.getElementById('video');
+    const shakaPlayer = new shaka.Player(video);
 
-  <div id="loading-overlay" class="overlay hidden">
-    <div class="spinner"></div>
-    <div id="loader-status">Loading…</div>
-  </div>
+    // Tell CAF to use this media element instead of its own player UI pipeline.
+    playerManager.setMediaElement(video);
 
-  <div id="error-overlay" class="overlay hidden">
-    <div class="error-icon">⚠️</div>
-    <div class="error-title">Playback Error</div>
-    <div class="error-msg" id="error-msg">Unable to play this media.</div>
-    <div class="error-code" id="error-code"></div>
-  </div>
+    let currentMediaInfo = null;
 
-  <div id="hud">
-    <div class="hud-pill">
-      <span class="live-dot"></span>
-      <span id="hud-state">PLAYING</span>
-    </div>
-    <div class="hud-pill" id="hud-format" style="display:none"></div>
-  </div>
+    function guessContentType(url) {
+      const u = (url || '').split('?')[0].toLowerCase();
+      if (u.endsWith('.m3u8')) return 'application/x-mpegURL';
+      if (u.endsWith('.mpd')) return 'application/dash+xml';
+      if (u.endsWith('.mp4')) return 'video/mp4';
+      if (u.endsWith('.webm')) return 'video/webm';
+      return 'video/mp4';
+    }
 
-<script>
-const context        = cast.framework.CastReceiverContext.getInstance();
-const playerManager  = context.getPlayerManager();
-const playbackConfig = new cast.framework.PlaybackConfig();
+    async function loadIntoCustomPlayer(request) {
+      const media = request.media || {};
+      const url = media.contentUrl || media.contentId;
+      const contentType = media.contentType || guessContentType(url);
 
-const idleScreen     = document.getElementById('idle-screen');
-const loadingOverlay = document.getElementById('loading-overlay');
-const loaderStatus   = document.getElementById('loader-status');
-const errorOverlay   = document.getElementById('error-overlay');
-const errorMsg       = document.getElementById('error-msg');
-const errorCode      = document.getElementById('error-code');
-const hud            = document.getElementById('hud');
-const hudState       = document.getElementById('hud-state');
-const hudFormat      = document.getElementById('hud-format');
-
-let hasStartedPlaying = false;
-
-function showState(state, opts) {
-  opts = opts || {};
-  idleScreen.classList.add('hidden');
-  loadingOverlay.classList.add('hidden');
-  errorOverlay.classList.add('hidden');
-  hud.classList.remove('visible');
-
-  switch (state) {
-    case 'idle':
-      hasStartedPlaying = false;
-      idleScreen.classList.remove('hidden');
-      break;
-    case 'loading':
-      if (!hasStartedPlaying) {
-        loadingOverlay.classList.remove('hidden');
-        loaderStatus.textContent = opts.msg || 'Loading…';
+      if (!url) {
+        throw new cast.framework.messages.ErrorData(
+          cast.framework.messages.ErrorType.LOAD_FAILED
+        );
       }
-      break;
-    case 'playing':
-      hasStartedPlaying = true;
-      hudState.textContent = 'PLAYING';
-      hud.classList.add('visible');
-      break;
-    case 'paused':
-      hudState.textContent = 'PAUSED';
-      hud.classList.add('visible');
-      break;
-    case 'error':
-      hasStartedPlaying = false;
-      errorOverlay.classList.remove('hidden');
-      errorMsg.textContent  = opts.msg  || 'Unable to play this media.';
-      errorCode.textContent = opts.code ? 'Code: ' + opts.code : '';
-      break;
-  }
-}
 
-function detectMime(url) {
-  var u = (url || '').split('?')[0].toLowerCase();
-  if (u.endsWith('.m3u8'))  return 'application/x-mpegURL';
-  if (u.endsWith('.mpd'))   return 'application/dash+xml';
-  if (u.endsWith('.webm'))  return 'video/webm';
-  if (u.endsWith('.mkv'))   return 'video/x-matroska';
-  if (u.endsWith('.mp3'))   return 'audio/mpeg';
-  if (u.endsWith('.aac'))   return 'audio/aac';
-  return 'video/mp4';
-}
+      currentMediaInfo = media;
 
-function updateClock() {
-  var now  = new Date();
-  var hh   = String(now.getHours()).padStart(2, '0');
-  var mm   = String(now.getMinutes()).padStart(2, '0');
-  var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-  var mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  document.getElementById('clock-time').textContent = hh + ':' + mm;
-  document.getElementById('clock-date').textContent =
-    days[now.getDay()] + ' ' + mons[now.getMonth()] + ' ' + now.getDate();
-}
-updateClock();
-setInterval(updateClock, 15000);
+      // HLS/DASH -> Shaka
+      if (contentType === 'application/x-mpegURL' ||
+          contentType === 'application/dash+xml') {
+        await shakaPlayer.load(url);
+      } else {
+        // MP4/WebM/direct file
+        video.src = url;
+        await video.play().catch(() => {});
+      }
 
-/* ── LOAD INTERCEPTOR — only change from original is here ── */
-playerManager.setMessageInterceptor(
-  cast.framework.messages.MessageType.LOAD,
-  function(request) {
-    var media = request.media;
+      // Make sure CAF knows what is loaded.
+      playerManager.setMediaInformation(media, true);
 
-    if (!media.contentUrl && media.contentId) {
-      media.contentUrl = media.contentId;
+      return request;
     }
 
-    // Trust sender-provided contentType first, only auto-detect if missing/generic
-    if (!media.contentType || media.contentType === 'application/octet-stream') {
-      media.contentType = detectMime(media.contentUrl);
-    }
+    // LOAD
+    playerManager.setMessageInterceptor(
+      cast.framework.messages.MessageType.LOAD,
+      async (request) => {
+        try {
+          await loadIntoCustomPlayer(request);
 
-    // MOV and MP4 are the same container — receiver handles both as video/mp4
-    if (media.contentType === 'video/quicktime') {
-      media.contentType = 'video/mp4';
-    }
+          if (request.currentTime != null && !isNaN(request.currentTime)) {
+            video.currentTime = request.currentTime;
+          }
 
-    var fmt = (media.contentType.split('/')[1] || 'VIDEO').toUpperCase();
-    hudFormat.textContent = fmt;
-    hudFormat.style.display = 'flex';
+          if (request.autoplay === false) {
+            video.pause();
+          } else {
+            await video.play().catch(() => {});
+          }
 
-    showState('loading', { msg: 'Loading media…' });
-    return request;
-  }
-);
+          return request;
+        } catch (e) {
+          console.error('LOAD failed', e);
+          return new cast.framework.messages.ErrorData(
+            cast.framework.messages.ErrorType.LOAD_FAILED
+          );
+        }
+      }
+    );
 
-/* ── PLAYER EVENTS ── */
-var EV = cast.framework.events.EventType;
-var PS = cast.framework.messages.PlayerState;
+    // PLAY
+    playerManager.setMessageInterceptor(
+      cast.framework.messages.MessageType.PLAY,
+      async (request) => {
+        try {
+          await video.play();
+          return request;
+        } catch (e) {
+          console.error('PLAY failed', e);
+          return new cast.framework.messages.ErrorData(
+            cast.framework.messages.ErrorType.INVALID_PLAYER_STATE
+          );
+        }
+      }
+    );
 
-playerManager.addEventListener(EV.MEDIA_STATUS, function(event) {
-  if (!event.mediaStatus) return;
-  var state = event.mediaStatus.playerState;
-  if (state === PS.PLAYING) {
-    showState('playing');
-  } else if (state === PS.PAUSED) {
-    showState('paused');
-  } else if (state === PS.BUFFERING) {
-    if (!hasStartedPlaying) {
-      loaderStatus.textContent = 'Buffering…';
-    }
-  } else if (state === PS.IDLE) {
-    var reason = event.mediaStatus.idleReason;
-    if (reason === 'FINISHED' || reason === 'CANCELLED' || reason === 'ERROR') {
-      showState('idle');
-    }
-  }
-});
+    // PAUSE
+    playerManager.setMessageInterceptor(
+      cast.framework.messages.MessageType.PAUSE,
+      (request) => {
+        video.pause();
+        return request;
+      }
+    );
 
-playerManager.addEventListener(EV.PLAYER_LOAD_COMPLETE, function() {
-  console.log('[Receiver] Load complete');
-  showState('playing');
-});
+    // SEEK
+    playerManager.setMessageInterceptor(
+      cast.framework.messages.MessageType.SEEK,
+      (request) => {
+        if (request.currentTime != null && !isNaN(request.currentTime)) {
+          video.currentTime = request.currentTime;
+        }
+        return request;
+      }
+    );
 
-playerManager.addEventListener(EV.ERROR, function(event) {
-  console.error('[Receiver] Error:', JSON.stringify(event));
-  showState('error', {
-    msg: 'Could not play this media. Check the URL or format.',
-    code: event.detailedErrorCode || ''
-  });
-});
+    // STOP
+    playerManager.setMessageInterceptor(
+      cast.framework.messages.MessageType.STOP,
+      (request) => {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        playerManager.setIdleReason(cast.framework.messages.IdleReason.CANCELLED);
+        return request;
+      }
+    );
 
-playerManager.addEventListener(EV.ENDED, function() {
-  showState('idle');
-});
+    // Keep CAF status aligned with the custom player state.
+    video.addEventListener('play',   () => playerManager.sendStatus());
+    video.addEventListener('pause',  () => playerManager.sendStatus());
+    video.addEventListener('seeking',() => playerManager.sendStatus());
+    video.addEventListener('seeked', () => playerManager.sendStatus());
+    video.addEventListener('waiting',() => playerManager.sendStatus());
+    video.addEventListener('playing',() => playerManager.sendStatus());
+    video.addEventListener('ended',  () => {
+      playerManager.setIdleReason(cast.framework.messages.IdleReason.FINISHED);
+      playerManager.sendStatus();
+    });
+    video.addEventListener('error',  () => {
+      playerManager.sendError(
+        new cast.framework.messages.ErrorData(
+          cast.framework.messages.ErrorType.LOAD_FAILED
+        )
+      );
+    });
 
-context.addEventListener(cast.framework.system.EventType.READY, function() {
-  console.log('[Receiver] Ready');
-  showState('idle');
-});
+    // Optional: Shaka error forwarding
+    shakaPlayer.addEventListener('error', (event) => {
+      console.error('Shaka error', event.detail);
+      playerManager.sendError(
+        new cast.framework.messages.ErrorData(
+          cast.framework.messages.ErrorType.LOAD_FAILED
+        )
+      );
+    });
 
-context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, function(e) {
-  console.log('[Receiver] Sender connected:', e.senderId);
-});
-
-context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, function(e) {
-  console.log('[Receiver] Sender disconnected:', e.senderId);
-});
-
-context.start({ playbackConfig: playbackConfig });
-console.log('[Receiver] Started v2.1');
-</script>
-
+    context.start();
+  </script>
 </body>
 </html>
