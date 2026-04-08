@@ -1,54 +1,55 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Custom Cast Receiver</title>
+  <title>Cast Receiver</title>
   <link rel="icon" href="data:,">
-
-  <!-- CAF Receiver SDK -->
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
-
-  <!-- Shaka Player -->
-  <script src="https://ajax.googleapis.com/ajax/libs/shaka-player/4.9.2-caf2/shaka-player.compiled.js"></script>
 
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     html, body {
-      width: 100%;
-      height: 100%;
+      width: 100%; height: 100%;
       background: #000;
       overflow: hidden;
       font-family: Arial, sans-serif;
     }
 
-    video {
+    /* ── The player MUST be the base layer, never covered ── */
+    cast-media-player {
       position: fixed;
-      inset: 0;
-      width: 100%;
-      height: 100%;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
       display: block;
-      background: #000;
-      object-fit: contain;
       z-index: 1;
+      --theme-hue: 195;
+      --progress-color: #00d4ff;
+      --splash-image: none;
+      --splash-color: #000000;
     }
 
+    /* ── All overlays sit above but ONLY shown when needed ── */
     .overlay {
       position: fixed;
-      inset: 0;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
       z-index: 10;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      pointer-events: none;
+      pointer-events: none; /* never block touch/input on player */
     }
 
+    /* Hidden state */
     .overlay.hidden {
       display: none;
     }
 
+    /* ── Idle Screen ── */
     #idle-screen {
       background: #000;
     }
@@ -75,12 +76,11 @@
 
     @keyframes ringPulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(0,212,255,0.3); }
-      50% { box-shadow: 0 0 0 20px rgba(0,212,255,0); }
+      50%       { box-shadow: 0 0 0 20px rgba(0,212,255,0); }
     }
 
     .cast-ring svg {
-      width: 32px;
-      height: 32px;
+      width: 32px; height: 32px;
       fill: #00d4ff;
     }
 
@@ -114,13 +114,13 @@
       margin-top: 6px;
     }
 
+    /* ── Loading Overlay ── */
     #loading-overlay {
       background: #000;
     }
 
     .spinner {
-      width: 48px;
-      height: 48px;
+      width: 48px; height: 48px;
       border: 3px solid rgba(255,255,255,0.1);
       border-top-color: #00d4ff;
       border-radius: 50%;
@@ -128,15 +128,14 @@
       margin-bottom: 16px;
     }
 
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     #loader-status {
       font-size: 14px;
       color: rgba(255,255,255,0.55);
     }
 
+    /* ── Error Overlay ── */
     #error-overlay {
       background: #0a0a0a;
     }
@@ -157,7 +156,7 @@
       font-size: 14px;
       color: rgba(255,255,255,0.55);
       text-align: center;
-      max-width: 420px;
+      max-width: 400px;
       line-height: 1.6;
     }
 
@@ -168,6 +167,7 @@
       color: rgba(255,255,255,0.25);
     }
 
+    /* ── HUD pills — float above player, never block it ── */
     #hud {
       position: fixed;
       top: 24px;
@@ -177,12 +177,10 @@
       gap: 8px;
       pointer-events: none;
       opacity: 0;
-      transition: opacity 0.3s;
+      transition: opacity 0.4s;
     }
 
-    #hud.visible {
-      opacity: 1;
-    }
+    #hud.visible { opacity: 1; }
 
     .hud-pill {
       display: flex;
@@ -199,8 +197,7 @@
     }
 
     .live-dot {
-      width: 6px;
-      height: 6px;
+      width: 6px; height: 6px;
       border-radius: 50%;
       background: #00d4ff;
       animation: blink 1.8s ease-in-out infinite;
@@ -208,14 +205,17 @@
 
     @keyframes blink {
       0%, 100% { opacity: 1; }
-      50% { opacity: 0.2; }
+      50%       { opacity: 0.2; }
     }
   </style>
 </head>
 
 <body>
-  <video id="video" playsinline autoplay></video>
 
+  <!-- 1. Player — always at base, NEVER hidden or covered -->
+  <cast-media-player></cast-media-player>
+
+  <!-- 2. Idle screen — shown only when no content is playing -->
   <div id="idle-screen" class="overlay">
     <div class="idle-logo">Cast Receiver</div>
     <div class="cast-ring">
@@ -230,11 +230,13 @@
     </div>
   </div>
 
+  <!-- 3. Loading — shown only while media is preparing (before first frame) -->
   <div id="loading-overlay" class="overlay hidden">
     <div class="spinner"></div>
     <div id="loader-status">Loading…</div>
   </div>
 
+  <!-- 4. Error — shown only on failure -->
   <div id="error-overlay" class="overlay hidden">
     <div class="error-icon">⚠️</div>
     <div class="error-title">Playback Error</div>
@@ -242,6 +244,7 @@
     <div class="error-code" id="error-code"></div>
   </div>
 
+  <!-- 5. HUD pills — float above player, pointer-events none so player still works -->
   <div id="hud">
     <div class="hud-pill">
       <span class="live-dot"></span>
@@ -250,405 +253,188 @@
     <div class="hud-pill" id="hud-format" style="display:none"></div>
   </div>
 
-  <script>
-    const context = cast.framework.CastReceiverContext.getInstance();
-    const playerManager = context.getPlayerManager();
+<script>
+/* ==============================================
+   CAST RECEIVER — v2.0 Fixed
+   Key rules:
+   1. cast-media-player is NEVER hidden
+   2. Overlays only show when there is NO video
+   3. During playback ALL overlays are hidden
+   4. Buffering uses the player's built-in UI
+============================================== */
 
-    const video = document.getElementById('video');
-    const idleScreen = document.getElementById('idle-screen');
-    const loadingOverlay = document.getElementById('loading-overlay');
-    const loaderStatus = document.getElementById('loader-status');
-    const errorOverlay = document.getElementById('error-overlay');
-    const errorMsg = document.getElementById('error-msg');
-    const errorCode = document.getElementById('error-code');
-    const hud = document.getElementById('hud');
-    const hudState = document.getElementById('hud-state');
-    const hudFormat = document.getElementById('hud-format');
+const context        = cast.framework.CastReceiverContext.getInstance();
+const playerManager  = context.getPlayerManager();
+const playbackConfig = new cast.framework.PlaybackConfig();
 
-    let shakaPlayer = null;
-    let hasStartedPlaying = false;
-    let currentMediaInfo = null;
+const idleScreen     = document.getElementById('idle-screen');
+const loadingOverlay = document.getElementById('loading-overlay');
+const loaderStatus   = document.getElementById('loader-status');
+const errorOverlay   = document.getElementById('error-overlay');
+const errorMsg       = document.getElementById('error-msg');
+const errorCode      = document.getElementById('error-code');
+const hud            = document.getElementById('hud');
+const hudState       = document.getElementById('hud-state');
+const hudFormat      = document.getElementById('hud-format');
 
-    function showState(state, opts = {}) {
-      idleScreen.classList.add('hidden');
-      loadingOverlay.classList.add('hidden');
-      errorOverlay.classList.add('hidden');
-      hud.classList.remove('visible');
+let hasStartedPlaying = false; // track if we've ever played this session
 
-      switch (state) {
-        case 'idle':
-          hasStartedPlaying = false;
-          idleScreen.classList.remove('hidden');
-          hudFormat.style.display = 'none';
-          break;
+// --- Single state machine: only one screen at a time ---
+function showState(state, opts = {}) {
+  idleScreen.classList.add('hidden');
+  loadingOverlay.classList.add('hidden');
+  errorOverlay.classList.add('hidden');
+  hud.classList.remove('visible');
 
-        case 'loading':
-          if (!hasStartedPlaying) {
-            loadingOverlay.classList.remove('hidden');
-            loaderStatus.textContent = opts.msg || 'Loading…';
-          }
-          break;
+  switch (state) {
+    case 'idle':
+      hasStartedPlaying = false;
+      idleScreen.classList.remove('hidden');
+      break;
 
-        case 'playing':
-          hasStartedPlaying = true;
-          hudState.textContent = 'PLAYING';
-          hud.classList.add('visible');
-          break;
-
-        case 'paused':
-          hasStartedPlaying = true;
-          hudState.textContent = 'PAUSED';
-          hud.classList.add('visible');
-          break;
-
-        case 'error':
-          hasStartedPlaying = false;
-          errorOverlay.classList.remove('hidden');
-          errorMsg.textContent = opts.msg || 'Unable to play this media.';
-          errorCode.textContent = opts.code ? `Code: ${opts.code}` : '';
-          break;
-      }
-    }
-
-    function updateClock() {
-      const now = new Date();
-      const hh = String(now.getHours()).padStart(2, '0');
-      const mm = String(now.getMinutes()).padStart(2, '0');
-      const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-      const mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-      document.getElementById('clock-time').textContent = `${hh}:${mm}`;
-      document.getElementById('clock-date').textContent =
-        `${days[now.getDay()]} ${mons[now.getMonth()]} ${now.getDate()}`;
-    }
-
-    function detectMime(url) {
-      const u = (url || '').split('?')[0].toLowerCase();
-      if (u.endsWith('.m3u8')) return 'application/x-mpegURL';
-      if (u.endsWith('.mpd')) return 'application/dash+xml';
-      if (u.endsWith('.webm')) return 'video/webm';
-      if (u.endsWith('.mkv')) return 'video/x-matroska';
-      if (u.endsWith('.mp3')) return 'audio/mpeg';
-      if (u.endsWith('.aac')) return 'audio/aac';
-      if (u.endsWith('.m4a')) return 'audio/mp4';
-      if (u.endsWith('.mov')) return 'video/quicktime';
-      return 'video/mp4';
-    }
-
-    function getFormatLabel(contentType) {
-      if (!contentType) return 'VIDEO';
-      const parts = contentType.split('/');
-      return (parts[1] || parts[0] || 'VIDEO').toUpperCase();
-    }
-
-    async function setupShaka() {
-      if (!window.shaka || !shaka.Player.isBrowserSupported()) {
-        throw new Error('Shaka Player is not supported on this device.');
-      }
-
-      shakaPlayer = new shaka.Player();
-      await shakaPlayer.attach(video);
-
-      shakaPlayer.addEventListener('error', (event) => {
-        const detail = event.detail || {};
-        console.error('[Receiver] Shaka error:', detail);
-
-        showState('error', {
-          msg: 'Could not play this media.',
-          code: detail.code || ''
-        });
-
-        try {
-          playerManager.sendError(
-            new cast.framework.messages.ErrorData(
-              cast.framework.messages.ErrorType.LOAD_FAILED
-            )
-          );
-        } catch (e) {
-          console.error('[Receiver] sendError failed:', e);
-        }
-      });
-    }
-
-    async function clearPlayback() {
-      try {
-        video.pause();
-      } catch (_) {}
-
-      if (shakaPlayer) {
-        try {
-          await shakaPlayer.unload();
-        } catch (e) {
-          console.warn('[Receiver] Shaka unload warning:', e);
-        }
-      }
-
-      video.removeAttribute('src');
-      video.load();
-      currentMediaInfo = null;
-    }
-
-    async function loadNativeVideo(url, startTime) {
-      return new Promise((resolve, reject) => {
-        const onLoadedMetadata = () => {
-          cleanup();
-          if (startTime > 0 && Number.isFinite(startTime)) {
-            try { video.currentTime = startTime; } catch (_) {}
-          }
-          resolve();
-        };
-
-        const onError = () => {
-          cleanup();
-          reject(new Error('Native video load failed'));
-        };
-
-        const cleanup = () => {
-          video.removeEventListener('loadedmetadata', onLoadedMetadata);
-          video.removeEventListener('error', onError);
-        };
-
-        video.addEventListener('loadedmetadata', onLoadedMetadata, { once: true });
-        video.addEventListener('error', onError, { once: true });
-        video.src = url;
-        video.load();
-      });
-    }
-
-    async function loadMedia(request) {
-      const media = request.media || {};
-      const url = media.contentUrl || media.contentId;
-
-      if (!url) {
-        throw new Error('Missing media URL');
-      }
-
-      const contentType = media.contentType || detectMime(url);
-      const startTime = typeof request.currentTime === 'number' ? request.currentTime : 0;
-      const useShaka = (
-        contentType === 'application/x-mpegURL' ||
-        contentType === 'application/dash+xml'
-      );
-
-      media.contentType = contentType;
-      currentMediaInfo = media;
-
-      hudFormat.textContent = getFormatLabel(contentType);
-      hudFormat.style.display = 'flex';
-
-      showState('loading', { msg: 'Loading media…' });
-
-      await clearPlayback();
-
-      if (useShaka) {
-        await shakaPlayer.load(url, startTime);
-      } else {
-        await loadNativeVideo(url, startTime);
-      }
-
-      playerManager.setMediaInformation(media, true);
-
-      if (request.autoplay === false) {
-        video.pause();
-        showState('paused');
-      } else {
-        try {
-          await video.play();
-          showState('playing');
-        } catch (e) {
-          console.warn('[Receiver] autoplay play() warning:', e);
-          showState('paused');
-        }
-      }
-    }
-
-    playerManager.setMediaElement(video);
-
-    playerManager.setMessageInterceptor(
-      cast.framework.messages.MessageType.LOAD,
-      async (request) => {
-        try {
-          await loadMedia(request);
-          return request;
-        } catch (e) {
-          console.error('[Receiver] LOAD failed:', e);
-
-          showState('error', {
-            msg: 'Could not play this media. Check the URL or format.',
-            code: e.message || ''
-          });
-
-          return new cast.framework.messages.ErrorData(
-            cast.framework.messages.ErrorType.LOAD_FAILED
-          );
-        }
-      }
-    );
-
-    playerManager.setMessageInterceptor(
-      cast.framework.messages.MessageType.PLAY,
-      async (request) => {
-        try {
-          await video.play();
-          showState('playing');
-          return request;
-        } catch (e) {
-          console.error('[Receiver] PLAY failed:', e);
-          return new cast.framework.messages.ErrorData(
-            cast.framework.messages.ErrorType.INVALID_PLAYER_STATE
-          );
-        }
-      }
-    );
-
-    playerManager.setMessageInterceptor(
-      cast.framework.messages.MessageType.PAUSE,
-      (request) => {
-        try {
-          video.pause();
-          showState('paused');
-          return request;
-        } catch (e) {
-          console.error('[Receiver] PAUSE failed:', e);
-          return new cast.framework.messages.ErrorData(
-            cast.framework.messages.ErrorType.INVALID_PLAYER_STATE
-          );
-        }
-      }
-    );
-
-    playerManager.setMessageInterceptor(
-      cast.framework.messages.MessageType.SEEK,
-      async (request) => {
-        try {
-          if (typeof request.currentTime === 'number' && Number.isFinite(request.currentTime)) {
-            video.currentTime = request.currentTime;
-          }
-
-          if (!video.paused) {
-            try { await video.play(); } catch (_) {}
-          }
-
-          return request;
-        } catch (e) {
-          console.error('[Receiver] SEEK failed:', e);
-          return new cast.framework.messages.ErrorData(
-            cast.framework.messages.ErrorType.INVALID_REQUEST
-          );
-        }
-      }
-    );
-
-    playerManager.setMessageInterceptor(
-      cast.framework.messages.MessageType.STOP,
-      async (request) => {
-        try {
-          await clearPlayback();
-          playerManager.setIdleReason(cast.framework.messages.IdleReason.CANCELLED);
-          showState('idle');
-          return request;
-        } catch (e) {
-          console.error('[Receiver] STOP failed:', e);
-          return new cast.framework.messages.ErrorData(
-            cast.framework.messages.ErrorType.INVALID_PLAYER_STATE
-          );
-        }
-      }
-    );
-
-    video.addEventListener('play', () => {
-      showState('playing');
-      try { playerManager.sendStatus(); } catch (_) {}
-    });
-
-    video.addEventListener('playing', () => {
-      showState('playing');
-      try { playerManager.sendStatus(); } catch (_) {}
-    });
-
-    video.addEventListener('pause', () => {
-      if (!video.ended) {
-        showState('paused');
-      }
-      try { playerManager.sendStatus(); } catch (_) {}
-    });
-
-    video.addEventListener('waiting', () => {
+    case 'loading':
+      // Only show loading overlay before playback starts
       if (!hasStartedPlaying) {
-        showState('loading', { msg: 'Buffering…' });
+        loadingOverlay.classList.remove('hidden');
+        loaderStatus.textContent = opts.msg || 'Loading…';
       }
-      try { playerManager.sendStatus(); } catch (_) {}
-    });
+      break;
 
-    video.addEventListener('seeking', () => {
-      try { playerManager.sendStatus(); } catch (_) {}
-    });
+    case 'playing':
+      hasStartedPlaying = true;
+      // ALL overlays hidden — video is fully visible
+      hudState.textContent = 'PLAYING';
+      hud.classList.add('visible');
+      break;
 
-    video.addEventListener('seeked', () => {
-      try { playerManager.sendStatus(); } catch (_) {}
-    });
+    case 'paused':
+      // Video is still visible — just update HUD label
+      hudState.textContent = 'PAUSED';
+      hud.classList.add('visible');
+      break;
 
-    video.addEventListener('ended', async () => {
-      try {
-        playerManager.setIdleReason(cast.framework.messages.IdleReason.FINISHED);
-      } catch (_) {}
+    case 'error':
+      hasStartedPlaying = false;
+      errorOverlay.classList.remove('hidden');
+      errorMsg.textContent  = opts.msg  || 'Unable to play this media.';
+      errorCode.textContent = opts.code ? `Code: ${opts.code}` : '';
+      break;
+  }
+}
 
-      try {
-        await clearPlayback();
-      } catch (_) {}
+// --- MIME detection ---
+function detectMime(url) {
+  const u = (url || '').split('?')[0].toLowerCase();
+  if (u.endsWith('.m3u8'))  return 'application/x-mpegURL';
+  if (u.endsWith('.mpd'))   return 'application/dash+xml';
+  if (u.endsWith('.webm'))  return 'video/webm';
+  if (u.endsWith('.mkv'))   return 'video/x-matroska';
+  if (u.endsWith('.mp3'))   return 'audio/mpeg';
+  if (u.endsWith('.aac'))   return 'audio/aac';
+  return 'video/mp4';
+}
 
+// --- Clock ---
+function updateClock() {
+  const now  = new Date();
+  const hh   = String(now.getHours()).padStart(2, '0');
+  const mm   = String(now.getMinutes()).padStart(2, '0');
+  const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const mons = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  document.getElementById('clock-time').textContent = `${hh}:${mm}`;
+  document.getElementById('clock-date').textContent =
+    `${days[now.getDay()]} ${mons[now.getMonth()]} ${now.getDate()}`;
+}
+updateClock();
+setInterval(updateClock, 15000);
+
+/* ── LOAD INTERCEPTOR ── */
+playerManager.setMessageInterceptor(
+  cast.framework.messages.MessageType.LOAD,
+  (request) => {
+    const media = request.media;
+
+    if (!media.contentUrl && media.contentId) {
+      media.contentUrl = media.contentId;
+    }
+
+    if (!media.contentType) {
+      media.contentType = detectMime(media.contentUrl);
+    }
+
+    const fmt = media.contentType.split('/')[1]?.toUpperCase() || 'VIDEO';
+    hudFormat.textContent = fmt;
+    hudFormat.style.display = 'flex';
+
+    showState('loading', { msg: 'Loading media…' });
+
+    return request;
+  }
+);
+
+/* ── PLAYER EVENTS ── */
+const EV = cast.framework.events.EventType;
+const PS = cast.framework.messages.PlayerState;
+
+playerManager.addEventListener(EV.MEDIA_STATUS, (event) => {
+  if (!event.mediaStatus) return;
+  const state = event.mediaStatus.playerState;
+
+  if (state === PS.PLAYING) {
+    // This is the critical one — hide ALL overlays
+    showState('playing');
+  } else if (state === PS.PAUSED) {
+    showState('paused');
+  } else if (state === PS.BUFFERING) {
+    // Do NOT show our loading overlay — let cast-media-player handle buffering UI
+    // Only show loading if we haven't played yet
+    if (!hasStartedPlaying) {
+      loaderStatus.textContent = 'Buffering…';
+    }
+  } else if (state === PS.IDLE) {
+    const reason = event.mediaStatus.idleReason;
+    if (reason === 'FINISHED' || reason === 'CANCELLED' || reason === 'ERROR') {
       showState('idle');
+    }
+  }
+});
 
-      try { playerManager.sendStatus(); } catch (_) {}
-    });
+// This fires when media is fully loaded and ready — most reliable signal
+playerManager.addEventListener(EV.PLAYER_LOAD_COMPLETE, () => {
+  console.log('[Receiver] Load complete — showing video');
+  showState('playing');
+});
 
-    video.addEventListener('error', () => {
-      const mediaError = video.error;
-      console.error('[Receiver] Native video error:', mediaError);
+playerManager.addEventListener(EV.ERROR, (event) => {
+  console.error('[Receiver] Error:', JSON.stringify(event));
+  showState('error', {
+    msg: 'Could not play this media. Check the URL or format.',
+    code: event.detailedErrorCode || ''
+  });
+});
 
-      showState('error', {
-        msg: 'Native video playback failed.',
-        code: mediaError ? mediaError.code : ''
-      });
+playerManager.addEventListener(EV.ENDED, () => {
+  showState('idle');
+});
 
-      try {
-        playerManager.sendError(
-          new cast.framework.messages.ErrorData(
-            cast.framework.messages.ErrorType.LOAD_FAILED
-          )
-        );
-      } catch (_) {}
-    });
+/* ── CONTEXT EVENTS ── */
+context.addEventListener(cast.framework.system.EventType.READY, () => {
+  console.log('[Receiver] Ready');
+  showState('idle');
+});
 
-    context.addEventListener(cast.framework.system.EventType.READY, () => {
-      console.log('[Receiver] Ready');
-      showState('idle');
-    });
+context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, (e) => {
+  console.log('[Receiver] Sender connected:', e.senderId);
+});
 
-    context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, (e) => {
-      console.log('[Receiver] Sender connected:', e.senderId);
-    });
+context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (e) => {
+  console.log('[Receiver] Sender disconnected:', e.senderId);
+});
 
-    context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (e) => {
-      console.log('[Receiver] Sender disconnected:', e.senderId);
-    });
+/* ── START ── */
+context.start({ playbackConfig });
+console.log('[Receiver] Started v2.0');
+</script>
 
-    updateClock();
-    setInterval(updateClock, 15000);
-
-    (async function startReceiver() {
-      try {
-        await setupShaka();
-        context.start();
-        console.log('[Receiver] Custom receiver started');
-      } catch (e) {
-        console.error('[Receiver] Startup failed:', e);
-        showState('error', {
-          msg: 'Receiver startup failed.',
-          code: e.message || ''
-        });
-      }
-    })();
-  </script>
 </body>
 </html>
