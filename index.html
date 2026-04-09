@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -29,6 +28,18 @@
       --progress-color: #00d4ff;
       --splash-image: none;
       --splash-color: #000000;
+    }
+    
+    #mirror-video {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+      z-index: 5;
+      display: none;
     }
 
     /* ── All overlays sit above but ONLY shown when needed ── */
@@ -214,6 +225,7 @@
 
   <!-- 1. Player — always at base, NEVER hidden or covered -->
   <cast-media-player></cast-media-player>
+  <video id="mirror-video" autoplay playsinline muted></video>
 
   <!-- 2. Idle screen — shown only when no content is playing -->
   <div id="idle-screen" class="overlay">
@@ -266,6 +278,7 @@
 const context        = cast.framework.CastReceiverContext.getInstance();
 const playerManager  = context.getPlayerManager();
 const playbackConfig = new cast.framework.PlaybackConfig();
+const mirrorNamespace = 'urn:x-cast:com.castingpractice.webrtc';
 
 const idleScreen     = document.getElementById('idle-screen');
 const loadingOverlay = document.getElementById('loading-overlay');
@@ -276,8 +289,13 @@ const errorCode      = document.getElementById('error-code');
 const hud            = document.getElementById('hud');
 const hudState       = document.getElementById('hud-state');
 const hudFormat      = document.getElementById('hud-format');
+const mirrorVideo    = document.getElementById('mirror-video');
 
 let hasStartedPlaying = false; // track if we've ever played this session
+let mirrorMode = false;
+let activeSenderId = null;
+let peerConnection = null;
+let pendingIce = [];
 
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
@@ -306,6 +324,12 @@ function showState(state, opts = {}) {
       hudState.textContent = 'PLAYING';
       hud.classList.add('visible');
       break;
+    
+    case 'mirroring':
+      hasStartedPlaying = true;
+      hudState.textContent = 'MIRRORING';
+      hud.classList.add('visible');
+      break;
 
     case 'paused':
       // Video is still visible — just update HUD label
@@ -321,6 +345,120 @@ function showState(state, opts = {}) {
       break;
   }
 }
+
+function setMirrorVisible(visible) {
+  mirrorVideo.style.display = visible ? 'block' : 'none';
+}
+
+function resetMirrorSession() {
+  pendingIce = [];
+  if (peerConnection) {
+    peerConnection.ontrack = null;
+    peerConnection.onicecandidate = null;
+    peerConnection.onconnectionstatechange = null;
+    peerConnection.close();
+    peerConnection = null;
+  }
+  mirrorVideo.srcObject = null;
+  setMirrorVisible(false);
+  mirrorMode = false;
+  if (playerManager.getPlayerState() === PS.PLAYING) {
+    showState('playing');
+  } else if (playerManager.getPlayerState() === PS.PAUSED) {
+    showState('paused');
+  } else {
+    showState('idle');
+  }
+}
+
+function sendMirrorMessage(type, payload = {}) {
+  if (!activeSenderId) return;
+  context.sendCustomMessage(
+    mirrorNamespace,
+    activeSenderId,
+    JSON.stringify({ type, ...payload })
+  );
+}
+
+async function createPeerConnection() {
+  if (peerConnection) return peerConnection;
+  peerConnection = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  });
+  
+  peerConnection.ontrack = (event) => {
+    if (!event.streams || event.streams.length === 0) return;
+    mirrorVideo.srcObject = event.streams[0];
+    setMirrorVisible(true);
+    mirrorMode = true;
+    showState('mirroring');
+  };
+  
+  peerConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+      sendMirrorMessage('receiverCandidate', { candidate: event.candidate });
+    }
+  };
+  
+  peerConnection.onconnectionstatechange = () => {
+    const state = peerConnection.connectionState;
+    if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+      resetMirrorSession();
+    }
+  };
+  
+  for (const candidate of pendingIce) {
+    try {
+      await peerConnection.addIceCandidate(candidate);
+    } catch (e) {
+      console.error('[Receiver] Failed to apply pending ICE', e);
+    }
+  }
+  pendingIce = [];
+  
+  return peerConnection;
+}
+
+context.addCustomMessageListener(mirrorNamespace, async (event) => {
+  try {
+    const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+    const type = data?.type;
+    activeSenderId = event.senderId || activeSenderId;
+    
+    if (type === 'startMirror') {
+      await createPeerConnection();
+      playerManager.stop();
+      showState('loading', { msg: 'Starting mirroring…' });
+      return;
+    }
+    
+    if (type === 'offer' && data.sdp) {
+      const pc = await createPeerConnection();
+      await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      sendMirrorMessage('answer', { sdp: answer.sdp });
+      return;
+    }
+    
+    if (type === 'candidate' && data.candidate) {
+      const ice = new RTCIceCandidate(data.candidate);
+      if (peerConnection && peerConnection.remoteDescription) {
+        await peerConnection.addIceCandidate(ice);
+      } else {
+        pendingIce.push(ice);
+      }
+      return;
+    }
+    
+    if (type === 'stopMirror') {
+      resetMirrorSession();
+    }
+  } catch (error) {
+    console.error('[Receiver] Mirror message error', error);
+    sendMirrorMessage('mirrorError', { message: String(error) });
+  }
+});
 
 // --- MIME detection ---
 function detectMime(url) {
@@ -377,6 +515,7 @@ const EV = cast.framework.events.EventType;
 const PS = cast.framework.messages.PlayerState;
 
 playerManager.addEventListener(EV.MEDIA_STATUS, (event) => {
+  if (mirrorMode) return;
   if (!event.mediaStatus) return;
   const state = event.mediaStatus.playerState;
 
@@ -401,11 +540,13 @@ playerManager.addEventListener(EV.MEDIA_STATUS, (event) => {
 
 // This fires when media is fully loaded and ready — most reliable signal
 playerManager.addEventListener(EV.PLAYER_LOAD_COMPLETE, () => {
+  if (mirrorMode) return;
   console.log('[Receiver] Load complete — showing video');
   showState('playing');
 });
 
 playerManager.addEventListener(EV.ERROR, (event) => {
+  if (mirrorMode) return;
   console.error('[Receiver] Error:', JSON.stringify(event));
   showState('error', {
     msg: 'Could not play this media. Check the URL or format.',
@@ -414,6 +555,7 @@ playerManager.addEventListener(EV.ERROR, (event) => {
 });
 
 playerManager.addEventListener(EV.ENDED, () => {
+  if (mirrorMode) return;
   showState('idle');
 });
 
@@ -429,6 +571,10 @@ context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, (e) =
 
 context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (e) => {
   console.log('[Receiver] Sender disconnected:', e.senderId);
+  if (e.senderId === activeSenderId) {
+    resetMirrorSession();
+    activeSenderId = null;
+  }
 });
 
 /* ── START ── */
