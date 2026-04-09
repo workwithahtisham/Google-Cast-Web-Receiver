@@ -373,11 +373,7 @@ function resetMirrorSession() {
 
 function sendMirrorMessage(type, payload = {}) {
   if (!activeSenderId) return;
-  context.sendCustomMessage(
-    mirrorNamespace,
-    activeSenderId,
-    JSON.stringify({ type, ...payload })
-  );
+  context.sendCustomMessage(mirrorNamespace, activeSenderId, { type, ...payload });
 }
 
 async function createPeerConnection() {
