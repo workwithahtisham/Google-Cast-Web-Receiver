@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -368,8 +367,8 @@ function optimizeMirrorSdp(sdp) {
     if (inVideo && line.startsWith('c=')) {
       out.push(line);
       if (!bandwidthInjected) {
-        out.push('b=AS:12000');
-        out.push('b=TIAS:12000000');
+        out.push('b=AS:24000');
+        out.push('b=TIAS:24000000');
         bandwidthInjected = true;
       }
       continue;
@@ -377,9 +376,9 @@ function optimizeMirrorSdp(sdp) {
 
     if (inVideo && line.startsWith('a=fmtp:') && !line.includes('apt=')) {
       let updated = line;
-      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=4000';
-      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=12000';
-      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=1500';
+      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=8000';
+      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=24000';
+      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=4000';
       out.push(updated);
       continue;
     }
