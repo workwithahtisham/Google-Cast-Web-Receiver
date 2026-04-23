@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -350,8 +351,42 @@ function setMirrorVisible(visible) {
   mirrorVideo.style.display = visible ? 'block' : 'none';
 }
 
-function optimizeMirrorSdp(sdp) {
+function preferH264InSdp(sdp) {
   const lines = sdp.split('\r\n');
+  const h264Payloads = [];
+
+  for (const line of lines) {
+    if (!line.startsWith('a=rtpmap:')) continue;
+    const rest = line.slice('a=rtpmap:'.length);
+    const parts = rest.split(' ');
+    if (parts.length < 2) continue;
+    if (parts[1].toUpperCase().includes('H264/')) h264Payloads.push(parts[0]);
+  }
+
+  if (h264Payloads.length === 0) return sdp;
+
+  const videoLineIndex = lines.findIndex((line) => line.startsWith('m=video '));
+  if (videoLineIndex >= 0) {
+    const parts = lines[videoLineIndex].split(' ');
+    if (parts.length > 3) {
+      const head = parts.slice(0, 3);
+      const payloads = parts.slice(3);
+      payloads.sort((a, b) => {
+        const aH264 = h264Payloads.includes(a);
+        const bH264 = h264Payloads.includes(b);
+        if (aH264 === bH264) return 0;
+        return aH264 ? -1 : 1;
+      });
+      lines[videoLineIndex] = [...head, ...payloads].join(' ');
+    }
+  }
+
+  return lines.join('\r\n');
+}
+
+function optimizeMirrorSdp(sdp) {
+  const preferred = preferH264InSdp(sdp);
+  const lines = preferred.split('\r\n');
   const out = [];
   let inVideo = false;
   let bandwidthInjected = false;
@@ -367,8 +402,8 @@ function optimizeMirrorSdp(sdp) {
     if (inVideo && line.startsWith('c=')) {
       out.push(line);
       if (!bandwidthInjected) {
-        out.push('b=AS:24000');
-        out.push('b=TIAS:24000000');
+        out.push('b=AS:40000');
+        out.push('b=TIAS:40000000');
         bandwidthInjected = true;
       }
       continue;
@@ -376,9 +411,9 @@ function optimizeMirrorSdp(sdp) {
 
     if (inVideo && line.startsWith('a=fmtp:') && !line.includes('apt=')) {
       let updated = line;
-      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=8000';
-      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=24000';
-      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=4000';
+      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=12000';
+      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=40000';
+      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=6000';
       out.push(updated);
       continue;
     }
