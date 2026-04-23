@@ -351,50 +351,8 @@ function setMirrorVisible(visible) {
   mirrorVideo.style.display = visible ? 'block' : 'none';
 }
 
-function preferH264InSdp(sdp) {
-  const lines = sdp.split('\r\n');
-  const h264Payloads = [];
-
-  for (const line of lines) {
-    if (!line.startsWith('a=rtpmap:')) continue;
-    const rest = line.slice('a=rtpmap:'.length);
-    const parts = rest.split(' ');
-    if (parts.length < 2) continue;
-    if (parts[1].toUpperCase().includes('H264/')) h264Payloads.push(parts[0]);
-  }
-
-  if (h264Payloads.length === 0) return sdp;
-
-  const videoLineIndex = lines.findIndex((line) => line.startsWith('m=video '));
-  if (videoLineIndex >= 0) {
-    const parts = lines[videoLineIndex].split(' ');
-    if (parts.length > 3) {
-      const head = parts.slice(0, 3);
-      const payloads = parts.slice(3);
-      payloads.sort((a, b) => {
-        const aH264 = h264Payloads.includes(a);
-        const bH264 = h264Payloads.includes(b);
-        if (aH264 === bH264) return 0;
-        return aH264 ? -1 : 1;
-      });
-      lines[videoLineIndex] = [...head, ...payloads].join(' ');
-    }
-  }
-
-  return lines.join('\r\n');
-}
-
 function optimizeMirrorSdp(sdp) {
-  const preferred = preferH264InSdp(sdp);
-  const lines = preferred.split('\r\n');
-  const h264Payloads = new Set();
-  for (const line of lines) {
-    if (!line.startsWith('a=rtpmap:')) continue;
-    const rest = line.slice('a=rtpmap:'.length);
-    const parts = rest.split(' ');
-    if (parts.length < 2) continue;
-    if (parts[1].toUpperCase().includes('H264/')) h264Payloads.add(parts[0]);
-  }
+  const lines = sdp.split('\r\n');
   const out = [];
   let inVideo = false;
   let bandwidthInjected = false;
@@ -410,8 +368,8 @@ function optimizeMirrorSdp(sdp) {
     if (inVideo && line.startsWith('c=')) {
       out.push(line);
       if (!bandwidthInjected) {
-        out.push('b=AS:40000');
-        out.push('b=TIAS:40000000');
+        out.push('b=AS:12000');
+        out.push('b=TIAS:12000000');
         bandwidthInjected = true;
       }
       continue;
@@ -419,20 +377,9 @@ function optimizeMirrorSdp(sdp) {
 
     if (inVideo && line.startsWith('a=fmtp:') && !line.includes('apt=')) {
       let updated = line;
-      const payload = line.slice('a=fmtp:'.length).split(' ')[0];
-      const isH264 = h264Payloads.has(payload);
-
-      if (isH264) {
-        if (updated.includes('profile-level-id=')) {
-          updated = updated.replace(/profile-level-id=[0-9a-fA-F]{6}/g, 'profile-level-id=640032');
-        } else {
-          updated += ';profile-level-id=640032;packetization-mode=1;level-asymmetry-allowed=1';
-        }
-      }
-
-      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=16000';
-      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=40000';
-      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=8000';
+      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=4000';
+      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=12000';
+      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=1500';
       out.push(updated);
       continue;
     }
