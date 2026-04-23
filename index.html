@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -350,6 +351,45 @@ function setMirrorVisible(visible) {
   mirrorVideo.style.display = visible ? 'block' : 'none';
 }
 
+function optimizeMirrorSdp(sdp) {
+  const lines = sdp.split('\r\n');
+  const out = [];
+  let inVideo = false;
+  let bandwidthInjected = false;
+
+  for (const line of lines) {
+    if (line.startsWith('m=')) {
+      inVideo = line.startsWith('m=video ');
+      bandwidthInjected = false;
+      out.push(line);
+      continue;
+    }
+
+    if (inVideo && line.startsWith('c=')) {
+      out.push(line);
+      if (!bandwidthInjected) {
+        out.push('b=AS:12000');
+        out.push('b=TIAS:12000000');
+        bandwidthInjected = true;
+      }
+      continue;
+    }
+
+    if (inVideo && line.startsWith('a=fmtp:') && !line.includes('apt=')) {
+      let updated = line;
+      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=4000';
+      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=12000';
+      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=1500';
+      out.push(updated);
+      continue;
+    }
+
+    out.push(line);
+  }
+
+  return out.join('\r\n');
+}
+
 function resetMirrorSession() {
   pendingIce = [];
   if (peerConnection) {
@@ -432,8 +472,12 @@ context.addCustomMessageListener(mirrorNamespace, async (event) => {
       const pc = await createPeerConnection();
       await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
       const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      sendMirrorMessage('answer', { sdp: answer.sdp });
+      const optimizedAnswer = {
+        type: 'answer',
+        sdp: optimizeMirrorSdp(answer.sdp || '')
+      };
+      await pc.setLocalDescription(optimizedAnswer);
+      sendMirrorMessage('answer', { sdp: optimizedAnswer.sdp });
       return;
     }
     
