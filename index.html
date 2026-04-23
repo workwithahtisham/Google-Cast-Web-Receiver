@@ -387,6 +387,14 @@ function preferH264InSdp(sdp) {
 function optimizeMirrorSdp(sdp) {
   const preferred = preferH264InSdp(sdp);
   const lines = preferred.split('\r\n');
+  const h264Payloads = new Set();
+  for (const line of lines) {
+    if (!line.startsWith('a=rtpmap:')) continue;
+    const rest = line.slice('a=rtpmap:'.length);
+    const parts = rest.split(' ');
+    if (parts.length < 2) continue;
+    if (parts[1].toUpperCase().includes('H264/')) h264Payloads.add(parts[0]);
+  }
   const out = [];
   let inVideo = false;
   let bandwidthInjected = false;
@@ -402,8 +410,8 @@ function optimizeMirrorSdp(sdp) {
     if (inVideo && line.startsWith('c=')) {
       out.push(line);
       if (!bandwidthInjected) {
-        out.push('b=AS:40000');
-        out.push('b=TIAS:40000000');
+        out.push('b=AS:80000');
+        out.push('b=TIAS:80000000');
         bandwidthInjected = true;
       }
       continue;
@@ -411,9 +419,20 @@ function optimizeMirrorSdp(sdp) {
 
     if (inVideo && line.startsWith('a=fmtp:') && !line.includes('apt=')) {
       let updated = line;
-      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=12000';
-      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=40000';
-      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=6000';
+      const payload = line.slice('a=fmtp:'.length).split(' ')[0];
+      const isH264 = h264Payloads.has(payload);
+
+      if (isH264) {
+        if (updated.includes('profile-level-id=')) {
+          updated = updated.replace(/profile-level-id=[0-9a-fA-F]{6}/g, 'profile-level-id=640034');
+        } else {
+          updated += ';profile-level-id=640034;packetization-mode=1;level-asymmetry-allowed=1';
+        }
+      }
+
+      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=25000';
+      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=80000';
+      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=8000';
       out.push(updated);
       continue;
     }
