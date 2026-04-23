@@ -410,8 +410,8 @@ function optimizeMirrorSdp(sdp) {
     if (inVideo && line.startsWith('c=')) {
       out.push(line);
       if (!bandwidthInjected) {
-        out.push('b=AS:80000');
-        out.push('b=TIAS:80000000');
+        out.push('b=AS:40000');
+        out.push('b=TIAS:40000000');
         bandwidthInjected = true;
       }
       continue;
@@ -424,14 +424,14 @@ function optimizeMirrorSdp(sdp) {
 
       if (isH264) {
         if (updated.includes('profile-level-id=')) {
-          updated = updated.replace(/profile-level-id=[0-9a-fA-F]{6}/g, 'profile-level-id=640034');
+          updated = updated.replace(/profile-level-id=[0-9a-fA-F]{6}/g, 'profile-level-id=640032');
         } else {
-          updated += ';profile-level-id=640034;packetization-mode=1;level-asymmetry-allowed=1';
+          updated += ';profile-level-id=640032;packetization-mode=1;level-asymmetry-allowed=1';
         }
       }
 
-      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=25000';
-      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=80000';
+      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=16000';
+      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=40000';
       if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=8000';
       out.push(updated);
       continue;
