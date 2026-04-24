@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -299,13 +300,6 @@ let pendingIce = [];
 let mirrorRoomId = null;
 let signalingSocket = null;
 
-// Optional TURN config for tougher network environments.
-const TURN_CONFIG = {
-  urls: '',
-  username: '',
-  credential: ''
-};
-
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
   idleScreen.classList.add('hidden');
@@ -456,17 +450,8 @@ function connectSignaling(signalingUrl, roomId) {
 async function createPeerConnection() {
   if (peerConnection) return peerConnection;
 
-  const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
-  if (TURN_CONFIG.urls && TURN_CONFIG.username && TURN_CONFIG.credential) {
-    iceServers.push({
-      urls: TURN_CONFIG.urls,
-      username: TURN_CONFIG.username,
-      credential: TURN_CONFIG.credential
-    });
-  }
-
   peerConnection = new RTCPeerConnection({
-    iceServers
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
   });
 
   peerConnection.ontrack = (event) => {
@@ -675,8 +660,15 @@ context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, (e) =
 context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (e) => {
   console.log('[Receiver] Sender disconnected:', e.senderId);
   if (e.senderId === activeSenderId) {
-    resetMirrorSession();
     activeSenderId = null;
+
+    // Keep ongoing mirroring alive when the iOS controller app exits.
+    // The broadcast extension can continue streaming over WebRTC independently.
+    if (!mirrorMode) {
+      resetMirrorSession();
+    } else {
+      console.log('[Receiver] Controller disconnected during mirroring; keeping WebRTC session active.');
+    }
   }
 });
 
