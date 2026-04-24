@@ -299,6 +299,11 @@ let peerConnection = null;
 let pendingIce = [];
 let mirrorRoomId = null;
 let signalingSocket = null;
+let signalingURL = null;
+let signalingReconnectTimer = null;
+let signalingReconnectAttempts = 0;
+const signalingReconnectBaseDelayMs = 1200;
+const signalingReconnectMaxAttempts = 8;
 
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
@@ -365,15 +370,22 @@ function sendSignal(payload) {
 }
 
 function connectSignaling(signalingUrl, roomId) {
+  if (signalingReconnectTimer) {
+    clearTimeout(signalingReconnectTimer);
+    signalingReconnectTimer = null;
+  }
+
   if (signalingSocket) {
     signalingSocket.close();
     signalingSocket = null;
   }
 
   mirrorRoomId = roomId;
+  signalingURL = signalingUrl;
   signalingSocket = new WebSocket(signalingUrl);
 
   signalingSocket.onopen = () => {
+    signalingReconnectAttempts = 0;
     signalingSocket.send(JSON.stringify({
       type: 'join',
       roomId,
@@ -439,11 +451,19 @@ function connectSignaling(signalingUrl, roomId) {
   };
 
   signalingSocket.onerror = () => {
-    sendMirrorMessage('mirrorError', { message: 'Signaling socket error' });
+    console.warn('[Receiver] Signaling socket error');
   };
 
   signalingSocket.onclose = () => {
     signalingSocket = null;
+
+    if (mirrorMode && signalingURL && mirrorRoomId && signalingReconnectAttempts < signalingReconnectMaxAttempts) {
+      const delay = signalingReconnectBaseDelayMs * (signalingReconnectAttempts + 1);
+      signalingReconnectAttempts += 1;
+      signalingReconnectTimer = setTimeout(() => {
+        connectSignaling(signalingURL, mirrorRoomId);
+      }, delay);
+    }
   };
 }
 
@@ -491,6 +511,12 @@ async function createPeerConnection() {
 
 function resetMirrorSession() {
   pendingIce = [];
+  signalingReconnectAttempts = 0;
+
+  if (signalingReconnectTimer) {
+    clearTimeout(signalingReconnectTimer);
+    signalingReconnectTimer = null;
+  }
 
   if (peerConnection) {
     peerConnection.ontrack = null;
@@ -506,6 +532,7 @@ function resetMirrorSession() {
   }
 
   mirrorRoomId = null;
+  signalingURL = null;
   mirrorVideo.srcObject = null;
   setMirrorVisible(false);
   mirrorMode = false;
