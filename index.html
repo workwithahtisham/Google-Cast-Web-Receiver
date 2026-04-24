@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -422,10 +421,10 @@ function connectSignaling(signalingUrl, roomId) {
         pc.getReceivers().forEach((r) => {
           if (r.track && r.track.kind === 'video') {
             if ('playoutDelayHint' in r) {
-              r.playoutDelayHint = 0;
+              r.playoutDelayHint = 0.08;
             }
             if ('jitterBufferTarget' in r) {
-              r.jitterBufferTarget = 0;
+              r.jitterBufferTarget = 0.06;
             }
           }
         });
