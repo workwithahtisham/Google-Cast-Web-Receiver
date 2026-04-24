@@ -297,6 +297,8 @@ let mirrorMode = false;
 let activeSenderId = null;
 let peerConnection = null;
 let pendingIce = [];
+let mirrorRoomId = null;
+let signalingSocket = null;
 
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
@@ -312,7 +314,6 @@ function showState(state, opts = {}) {
       break;
 
     case 'loading':
-      // Only show loading overlay before playback starts
       if (!hasStartedPlaying) {
         loadingOverlay.classList.remove('hidden');
         loaderStatus.textContent = opts.msg || 'Loading…';
@@ -321,11 +322,10 @@ function showState(state, opts = {}) {
 
     case 'playing':
       hasStartedPlaying = true;
-      // ALL overlays hidden — video is fully visible
       hudState.textContent = 'PLAYING';
       hud.classList.add('visible');
       break;
-    
+
     case 'mirroring':
       hasStartedPlaying = true;
       hudState.textContent = 'MIRRORING';
@@ -333,7 +333,6 @@ function showState(state, opts = {}) {
       break;
 
     case 'paused':
-      // Video is still visible — just update HUD label
       hudState.textContent = 'PAUSED';
       hud.classList.add('visible');
       break;
@@ -351,47 +350,122 @@ function setMirrorVisible(visible) {
   mirrorVideo.style.display = visible ? 'block' : 'none';
 }
 
-function optimizeMirrorSdp(sdp) {
-  const lines = sdp.split('\r\n');
-  const out = [];
-  let inVideo = false;
-  let bandwidthInjected = false;
+function sendMirrorMessage(type, payload = {}) {
+  if (!activeSenderId) return;
+  context.sendCustomMessage(mirrorNamespace, activeSenderId, { type, ...payload });
+}
 
-  for (const line of lines) {
-    if (line.startsWith('m=')) {
-      inVideo = line.startsWith('m=video ');
-      bandwidthInjected = false;
-      out.push(line);
-      continue;
-    }
+function sendSignal(payload) {
+  if (!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN || !mirrorRoomId) return;
+  signalingSocket.send(JSON.stringify({
+    type: 'signal',
+    roomId: mirrorRoomId,
+    payload
+  }));
+}
 
-    if (inVideo && line.startsWith('c=')) {
-      out.push(line);
-      if (!bandwidthInjected) {
-        out.push('b=AS:12000');
-        out.push('b=TIAS:12000000');
-        bandwidthInjected = true;
-      }
-      continue;
-    }
-
-    if (inVideo && line.startsWith('a=fmtp:') && !line.includes('apt=')) {
-      let updated = line;
-      if (!updated.includes('x-google-start-bitrate')) updated += ';x-google-start-bitrate=4000';
-      if (!updated.includes('x-google-max-bitrate')) updated += ';x-google-max-bitrate=12000';
-      if (!updated.includes('x-google-min-bitrate')) updated += ';x-google-min-bitrate=1500';
-      out.push(updated);
-      continue;
-    }
-
-    out.push(line);
+function connectSignaling(signalingUrl, roomId) {
+  if (signalingSocket) {
+    signalingSocket.close();
+    signalingSocket = null;
   }
 
-  return out.join('\r\n');
+  mirrorRoomId = roomId;
+  signalingSocket = new WebSocket(signalingUrl);
+
+  signalingSocket.onopen = () => {
+    signalingSocket.send(JSON.stringify({
+      type: 'join',
+      roomId,
+      role: 'receiver'
+    }));
+  };
+
+  signalingSocket.onmessage = async (event) => {
+    try {
+      const message = JSON.parse(event.data);
+      if (message.type !== 'signal' || !message.payload) return;
+
+      const payload = message.payload;
+      const signalType = payload.type;
+
+      if (signalType === 'offer' && payload.sdp) {
+        const pc = await createPeerConnection();
+        await pc.setRemoteDescription({ type: 'offer', sdp: payload.sdp });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        sendSignal({ type: 'answer', sdp: answer.sdp || '' });
+        return;
+      }
+
+      if (signalType === 'candidate' && payload.candidate) {
+        const ice = new RTCIceCandidate(payload.candidate);
+        if (peerConnection && peerConnection.remoteDescription) {
+          await peerConnection.addIceCandidate(ice);
+        } else {
+          pendingIce.push(ice);
+        }
+      }
+    } catch (error) {
+      console.error('[Receiver] signaling message error', error);
+      sendMirrorMessage('mirrorError', { message: String(error) });
+    }
+  };
+
+  signalingSocket.onerror = () => {
+    sendMirrorMessage('mirrorError', { message: 'Signaling socket error' });
+  };
+
+  signalingSocket.onclose = () => {
+    signalingSocket = null;
+  };
+}
+
+async function createPeerConnection() {
+  if (peerConnection) return peerConnection;
+
+  peerConnection = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  });
+
+  peerConnection.ontrack = (event) => {
+    if (!event.streams || event.streams.length === 0) return;
+    mirrorVideo.srcObject = event.streams[0];
+    setMirrorVisible(true);
+    mirrorMode = true;
+    showState('mirroring');
+    sendMirrorMessage('mirrorStarted');
+  };
+
+  peerConnection.onicecandidate = (event) => {
+    if (event.candidate) {
+      sendSignal({ type: 'candidate', candidate: event.candidate });
+    }
+  };
+
+  peerConnection.onconnectionstatechange = () => {
+    if (!peerConnection) return;
+    const state = peerConnection.connectionState;
+    if (state === 'failed' || state === 'closed') {
+      resetMirrorSession();
+    }
+  };
+
+  for (const candidate of pendingIce) {
+    try {
+      await peerConnection.addIceCandidate(candidate);
+    } catch (e) {
+      console.error('[Receiver] Failed to apply pending ICE', e);
+    }
+  }
+  pendingIce = [];
+
+  return peerConnection;
 }
 
 function resetMirrorSession() {
   pendingIce = [];
+
   if (peerConnection) {
     peerConnection.ontrack = null;
     peerConnection.onicecandidate = null;
@@ -399,9 +473,17 @@ function resetMirrorSession() {
     peerConnection.close();
     peerConnection = null;
   }
+
+  if (signalingSocket) {
+    signalingSocket.close();
+    signalingSocket = null;
+  }
+
+  mirrorRoomId = null;
   mirrorVideo.srcObject = null;
   setMirrorVisible(false);
   mirrorMode = false;
+
   if (playerManager.getPlayerState() === PS.PLAYING) {
     showState('playing');
   } else if (playerManager.getPlayerState() === PS.PAUSED) {
@@ -411,88 +493,28 @@ function resetMirrorSession() {
   }
 }
 
-function sendMirrorMessage(type, payload = {}) {
-  if (!activeSenderId) return;
-  context.sendCustomMessage(mirrorNamespace, activeSenderId, { type, ...payload });
-}
-
-async function createPeerConnection() {
-  if (peerConnection) return peerConnection;
-  peerConnection = new RTCPeerConnection({
-    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-  });
-  
-  peerConnection.ontrack = (event) => {
-    if (!event.streams || event.streams.length === 0) return;
-    mirrorVideo.srcObject = event.streams[0];
-    setMirrorVisible(true);
-    mirrorMode = true;
-    showState('mirroring');
-  };
-  
-  peerConnection.onicecandidate = (event) => {
-    if (event.candidate) {
-      sendMirrorMessage('receiverCandidate', { candidate: event.candidate });
-    }
-  };
-  
-  peerConnection.onconnectionstatechange = () => {
-    const state = peerConnection.connectionState;
-    if (state === 'failed' || state === 'closed' || state === 'disconnected') {
-      resetMirrorSession();
-    }
-  };
-  
-  for (const candidate of pendingIce) {
-    try {
-      await peerConnection.addIceCandidate(candidate);
-    } catch (e) {
-      console.error('[Receiver] Failed to apply pending ICE', e);
-    }
-  }
-  pendingIce = [];
-  
-  return peerConnection;
-}
-
 context.addCustomMessageListener(mirrorNamespace, async (event) => {
   try {
     const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
     const type = data?.type;
     activeSenderId = event.senderId || activeSenderId;
-    
-    if (type === 'startMirror') {
-      await createPeerConnection();
+
+    if (type === 'startMirrorWS') {
+      const roomId = data.roomId;
+      const signalingUrl = data.signalingUrl;
+      if (!roomId || !signalingUrl) {
+        throw new Error('Missing roomId or signalingUrl');
+      }
+
       playerManager.stop();
       showState('loading', { msg: 'Starting mirroring…' });
+      connectSignaling(signalingUrl, roomId);
       return;
     }
-    
-    if (type === 'offer' && data.sdp) {
-      const pc = await createPeerConnection();
-      await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
-      const answer = await pc.createAnswer();
-      const optimizedAnswer = {
-        type: 'answer',
-        sdp: optimizeMirrorSdp(answer.sdp || '')
-      };
-      await pc.setLocalDescription(optimizedAnswer);
-      sendMirrorMessage('answer', { sdp: optimizedAnswer.sdp });
-      return;
-    }
-    
-    if (type === 'candidate' && data.candidate) {
-      const ice = new RTCIceCandidate(data.candidate);
-      if (peerConnection && peerConnection.remoteDescription) {
-        await peerConnection.addIceCandidate(ice);
-      } else {
-        pendingIce.push(ice);
-      }
-      return;
-    }
-    
+
     if (type === 'stopMirror') {
       resetMirrorSession();
+      sendMirrorMessage('mirrorStopped');
     }
   } catch (error) {
     console.error('[Receiver] Mirror message error', error);
