@@ -363,9 +363,19 @@ function startReceiverStats() {
         ? (selectedCandidatePair.currentRoundTripTime * 1000).toFixed(1)
         : 'n/a';
 
-      console.log(
-        `[ReceiverStats] ${width}x${height} ${fps}fps | bitrate=${formatKbps(bitrateKbps)} | jitter=${jitterMs}ms | rtt=${rttMs}ms | lost=${packetsLost}`
-      );
+      const statsMessage = `[ReceiverStats] ${width}x${height} ${fps}fps | bitrate=${formatKbps(bitrateKbps)} | jitter=${jitterMs}ms | rtt=${rttMs}ms | lost=${packetsLost}`;
+
+      console.log(statsMessage);
+      sendMirrorMessage('mirrorStats', {
+        width,
+        height,
+        fps,
+        bitrateKbps: Number.isFinite(bitrateKbps) ? Math.round(bitrateKbps) : null,
+        jitterMs,
+        rttMs,
+        packetsLost,
+        line: statsMessage
+      });
     } catch (error) {
       console.warn('[ReceiverStats] Failed to collect stats', error);
     }
