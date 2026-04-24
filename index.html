@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -301,8 +302,83 @@ let signalingSocket = null;
 let signalingURL = null;
 let signalingReconnectTimer = null;
 let signalingReconnectAttempts = 0;
+let statsTimer = null;
+let lastReceiverStats = null;
 const signalingReconnectBaseDelayMs = 1200;
 const signalingReconnectMaxAttempts = 8;
+
+function formatKbps(value) {
+  if (!Number.isFinite(value)) return 'n/a';
+  return `${Math.round(value)} kbps`;
+}
+
+function startReceiverStats() {
+  if (statsTimer) {
+    clearInterval(statsTimer);
+    statsTimer = null;
+  }
+  lastReceiverStats = null;
+
+  statsTimer = setInterval(async () => {
+    if (!peerConnection) return;
+
+    try {
+      const report = await peerConnection.getStats();
+
+      let inboundVideo = null;
+      let selectedCandidatePair = null;
+
+      report.forEach((stat) => {
+        if (stat.type === 'inbound-rtp' && stat.kind === 'video' && !stat.isRemote) {
+          inboundVideo = stat;
+        } else if (stat.type === 'candidate-pair' && (stat.selected || stat.nominated)) {
+          selectedCandidatePair = stat;
+        }
+      });
+
+      if (!inboundVideo) return;
+
+      let bitrateKbps = NaN;
+      if (lastReceiverStats &&
+          Number.isFinite(inboundVideo.bytesReceived) &&
+          Number.isFinite(inboundVideo.timestamp)) {
+        const bytesDelta = inboundVideo.bytesReceived - lastReceiverStats.bytesReceived;
+        const timeDeltaMs = inboundVideo.timestamp - lastReceiverStats.timestamp;
+        if (bytesDelta >= 0 && timeDeltaMs > 0) {
+          bitrateKbps = (bytesDelta * 8) / timeDeltaMs;
+        }
+      }
+
+      lastReceiverStats = {
+        bytesReceived: inboundVideo.bytesReceived || 0,
+        timestamp: inboundVideo.timestamp || 0
+      };
+
+      const width = inboundVideo.frameWidth || 0;
+      const height = inboundVideo.frameHeight || 0;
+      const fps = inboundVideo.framesPerSecond || 0;
+      const jitterMs = Number.isFinite(inboundVideo.jitter) ? (inboundVideo.jitter * 1000).toFixed(1) : 'n/a';
+      const packetsLost = Number.isFinite(inboundVideo.packetsLost) ? inboundVideo.packetsLost : 'n/a';
+      const rttMs = selectedCandidatePair && Number.isFinite(selectedCandidatePair.currentRoundTripTime)
+        ? (selectedCandidatePair.currentRoundTripTime * 1000).toFixed(1)
+        : 'n/a';
+
+      console.log(
+        `[ReceiverStats] ${width}x${height} ${fps}fps | bitrate=${formatKbps(bitrateKbps)} | jitter=${jitterMs}ms | rtt=${rttMs}ms | lost=${packetsLost}`
+      );
+    } catch (error) {
+      console.warn('[ReceiverStats] Failed to collect stats', error);
+    }
+  }, 3000);
+}
+
+function stopReceiverStats() {
+  if (statsTimer) {
+    clearInterval(statsTimer);
+    statsTimer = null;
+  }
+  lastReceiverStats = null;
+}
 
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
@@ -478,6 +554,7 @@ async function createPeerConnection() {
     mirrorVideo.srcObject = event.streams[0];
     setMirrorVisible(true);
     mirrorMode = true;
+    startReceiverStats();
     showState('mirroring');
     sendMirrorMessage('mirrorStarted');
   };
@@ -511,6 +588,7 @@ async function createPeerConnection() {
 function resetMirrorSession() {
   pendingIce = [];
   signalingReconnectAttempts = 0;
+  stopReceiverStats();
 
   if (signalingReconnectTimer) {
     clearTimeout(signalingReconnectTimer);
