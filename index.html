@@ -299,6 +299,7 @@ let peerConnection = null;
 let pendingIce = [];
 let mirrorRoomId = null;
 let signalingSocket = null;
+let mirrorPlaybackMode = 'smooth'; // 'smooth' or 'lowLatency'
 
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
@@ -364,6 +365,22 @@ function sendSignal(payload) {
   }));
 }
 
+function applyReceiverBufferPolicy(pc) {
+  const target = mirrorPlaybackMode === 'lowLatency' ? 0.0 : 0.22;
+
+  pc.getReceivers().forEach((r) => {
+    if (!r.track || r.track.kind !== 'video') return;
+
+    if ('playoutDelayHint' in r) {
+      r.playoutDelayHint = target;
+    }
+
+    if ('jitterBufferTarget' in r) {
+      r.jitterBufferTarget = target;
+    }
+  });
+}
+
 function connectSignaling(signalingUrl, roomId) {
   if (signalingSocket) {
     signalingSocket.close();
@@ -406,17 +423,7 @@ function connectSignaling(signalingUrl, roomId) {
           });
         }
 
-        // Low latency playback hints (best-effort, browser-dependent).
-        pc.getReceivers().forEach((r) => {
-          if (r.track && r.track.kind === 'video') {
-            if ('playoutDelayHint' in r) {
-              r.playoutDelayHint = 0;
-            }
-            if ('jitterBufferTarget' in r) {
-              r.jitterBufferTarget = 0;
-            }
-          }
-        });
+        applyReceiverBufferPolicy(pc);
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -453,6 +460,8 @@ async function createPeerConnection() {
   peerConnection = new RTCPeerConnection({
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
   });
+
+  applyReceiverBufferPolicy(peerConnection);
 
   peerConnection.ontrack = (event) => {
     if (!event.streams || event.streams.length === 0) return;
@@ -532,8 +541,11 @@ context.addCustomMessageListener(mirrorNamespace, async (event) => {
         throw new Error('Missing roomId or signalingUrl');
       }
 
+      const requestedMode = (data.playbackMode || '').toString().trim();
+      mirrorPlaybackMode = requestedMode === 'lowLatency' ? 'lowLatency' : 'smooth';
+
       playerManager.stop();
-      showState('loading', { msg: 'Starting mirroring…' });
+      showState('loading', { msg: `Starting mirroring (${mirrorPlaybackMode})…` });
       connectSignaling(signalingUrl, roomId);
       return;
     }
