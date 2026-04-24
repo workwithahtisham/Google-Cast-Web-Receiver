@@ -540,6 +540,19 @@ function connectSignaling(signalingUrl, roomId) {
         const line = `[SenderStats] capture=${captureWidth}x${captureHeight} ${captureFPS}fps | peerState=${peerState}`;
         console.log(line);
         sendMirrorMessage('senderStats', { line, captureWidth, captureHeight, captureFPS, peerState });
+        return;
+      }
+
+      if (signalType === 'senderRtcStats') {
+        const encodeWidth = payload.encodeWidth || 0;
+        const encodeHeight = payload.encodeHeight || 0;
+        const encodeFPS = payload.encodeFPS || 0;
+        const outboundBitrateKbps = payload.outboundBitrateKbps;
+        const bitrateText = Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a';
+
+        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${bitrateText}`;
+        console.log(line);
+        sendMirrorMessage('senderRtcStats', { line, encodeWidth, encodeHeight, encodeFPS, outboundBitrateKbps });
       }
     } catch (error) {
       console.error('[Receiver] signaling message error', error);
