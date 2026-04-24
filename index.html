@@ -528,6 +528,18 @@ function connectSignaling(signalingUrl, roomId) {
         } else {
           pendingIce.push(ice);
         }
+        return;
+      }
+
+      if (signalType === 'senderStats') {
+        const captureWidth = payload.captureWidth || 0;
+        const captureHeight = payload.captureHeight || 0;
+        const captureFPS = payload.captureFPS || 0;
+        const peerState = payload.peerState;
+
+        const line = `[SenderStats] capture=${captureWidth}x${captureHeight} ${captureFPS}fps | peerState=${peerState}`;
+        console.log(line);
+        sendMirrorMessage('senderStats', { line, captureWidth, captureHeight, captureFPS, peerState });
       }
     } catch (error) {
       console.error('[Receiver] signaling message error', error);
