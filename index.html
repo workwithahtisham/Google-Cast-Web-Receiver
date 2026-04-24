@@ -490,30 +490,9 @@ function connectSignaling(signalingUrl, roomId) {
         const pc = await createPeerConnection();
         await pc.setRemoteDescription({ type: 'offer', sdp: payload.sdp });
 
-        // Prefer H264 for better text/detail quality on many TV decoders.
-        const caps = RTCRtpReceiver.getCapabilities ? RTCRtpReceiver.getCapabilities('video') : null;
-        if (caps && caps.codecs && caps.codecs.length > 0) {
-          const h264 = caps.codecs.filter((c) => c.mimeType && c.mimeType.toLowerCase() === 'video/h264');
-          const others = caps.codecs.filter((c) => !c.mimeType || c.mimeType.toLowerCase() !== 'video/h264');
-          const preferred = [...h264, ...others];
-          pc.getTransceivers().forEach((t) => {
-            if (t.receiver && t.receiver.track && t.receiver.track.kind === 'video' && t.setCodecPreferences) {
-              t.setCodecPreferences(preferred);
-            }
-          });
-        }
-
-        // Low latency playback hints (best-effort, browser-dependent).
-        pc.getReceivers().forEach((r) => {
-          if (r.track && r.track.kind === 'video') {
-            if ('playoutDelayHint' in r) {
-              r.playoutDelayHint = 0.08;
-            }
-            if ('jitterBufferTarget' in r) {
-              r.jitterBufferTarget = 0.06;
-            }
-          }
-        });
+        // Use browser defaults for codec + buffering.
+        // For this receiver/runtime, forced H264 and custom playout hints can
+        // destabilize bitrate adaptation and cause severe downscale collapse.
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
