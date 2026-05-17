@@ -299,6 +299,9 @@ let peerConnection = null;
 let pendingIce = [];
 let mirrorRoomId = null;
 let signalingSocket = null;
+let receiverStatsTimer = null;
+let lastInboundBytesReceived = null;
+let lastInboundTimestampMs = null;
 
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
@@ -364,6 +367,57 @@ function sendSignal(payload) {
   }));
 }
 
+function startReceiverStats() {
+  stopReceiverStats();
+
+  receiverStatsTimer = setInterval(async () => {
+    if (!peerConnection) return;
+
+    try {
+      const report = await peerConnection.getStats();
+      let inboundVideo = null;
+
+      report.forEach((stat) => {
+        if (stat.type === 'inbound-rtp' && stat.kind === 'video' && !stat.isRemote) {
+          inboundVideo = stat;
+        }
+      });
+
+      if (!inboundVideo) return;
+
+      let bitrateKbps = null;
+      if (lastInboundBytesReceived !== null && lastInboundTimestampMs !== null) {
+        const bytesDelta = inboundVideo.bytesReceived - lastInboundBytesReceived;
+        const msDelta = inboundVideo.timestamp - lastInboundTimestampMs;
+        if (bytesDelta >= 0 && msDelta > 0) {
+          bitrateKbps = Math.round((bytesDelta * 8) / msDelta);
+        }
+      }
+
+      lastInboundBytesReceived = inboundVideo.bytesReceived;
+      lastInboundTimestampMs = inboundVideo.timestamp;
+
+      const width = inboundVideo.frameWidth || 0;
+      const height = inboundVideo.frameHeight || 0;
+      const fps = inboundVideo.framesPerSecond || 0;
+      const jitterMs = Number.isFinite(inboundVideo.jitter) ? (inboundVideo.jitter * 1000).toFixed(1) : 'n/a';
+      const packetsLost = Number.isFinite(inboundVideo.packetsLost) ? inboundVideo.packetsLost : 'n/a';
+      console.log(`[ReceiverStats] ${width}x${height} ${fps}fps | bitrate=${bitrateKbps ?? 'n/a'} kbps | jitter=${jitterMs}ms | lost=${packetsLost}`);
+    } catch (error) {
+      console.warn('[ReceiverStats] getStats failed', error);
+    }
+  }, 3000);
+}
+
+function stopReceiverStats() {
+  if (receiverStatsTimer) {
+    clearInterval(receiverStatsTimer);
+    receiverStatsTimer = null;
+  }
+  lastInboundBytesReceived = null;
+  lastInboundTimestampMs = null;
+}
+
 function connectSignaling(signalingUrl, roomId) {
   if (signalingSocket) {
     signalingSocket.close();
@@ -374,6 +428,7 @@ function connectSignaling(signalingUrl, roomId) {
   signalingSocket = new WebSocket(signalingUrl);
 
   signalingSocket.onopen = () => {
+    console.log('[Receiver] signaling open room=', roomId);
     signalingSocket.send(JSON.stringify({
       type: 'join',
       roomId,
@@ -384,12 +439,17 @@ function connectSignaling(signalingUrl, roomId) {
   signalingSocket.onmessage = async (event) => {
     try {
       const message = JSON.parse(event.data);
+      if (message.type === 'joined') {
+        console.log('[Receiver] joined room=', roomId);
+        return;
+      }
       if (message.type !== 'signal' || !message.payload) return;
 
       const payload = message.payload;
       const signalType = payload.type;
 
       if (signalType === 'offer' && payload.sdp) {
+        console.log('[Receiver] got offer sdpLength=', payload.sdp.length);
         const pc = await createPeerConnection();
         await pc.setRemoteDescription({ type: 'offer', sdp: payload.sdp });
 
@@ -399,6 +459,7 @@ function connectSignaling(signalingUrl, roomId) {
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+        console.log('[Receiver] sending answer sdpLength=', (answer.sdp || '').length);
         sendSignal({ type: 'answer', sdp: answer.sdp || '' });
         return;
       }
@@ -418,10 +479,12 @@ function connectSignaling(signalingUrl, roomId) {
   };
 
   signalingSocket.onerror = () => {
+    console.error('[Receiver] signaling socket error');
     sendMirrorMessage('mirrorError', { message: 'Signaling socket error' });
   };
 
   signalingSocket.onclose = () => {
+    console.warn('[Receiver] signaling socket closed');
     signalingSocket = null;
   };
 }
@@ -435,9 +498,11 @@ async function createPeerConnection() {
 
   peerConnection.ontrack = (event) => {
     if (!event.streams || event.streams.length === 0) return;
+    console.log('[Receiver] ontrack stream received');
     mirrorVideo.srcObject = event.streams[0];
     setMirrorVisible(true);
     mirrorMode = true;
+    startReceiverStats();
     showState('mirroring');
     sendMirrorMessage('mirrorStarted');
   };
@@ -451,7 +516,8 @@ async function createPeerConnection() {
   peerConnection.onconnectionstatechange = () => {
     if (!peerConnection) return;
     const state = peerConnection.connectionState;
-    if (state === 'failed' || state === 'closed') {
+    console.log('[Receiver] pc connectionState=', state);
+    if (state === 'failed' || state === 'closed' || state === 'disconnected') {
       resetMirrorSession();
     }
   };
@@ -470,6 +536,7 @@ async function createPeerConnection() {
 
 function resetMirrorSession() {
   pendingIce = [];
+  stopReceiverStats();
 
   if (peerConnection) {
     peerConnection.ontrack = null;
@@ -507,6 +574,7 @@ context.addCustomMessageListener(mirrorNamespace, async (event) => {
     if (type === 'startMirrorWS') {
       const roomId = data.roomId;
       const signalingUrl = data.signalingUrl;
+      console.log('[Receiver] startMirrorWS roomId=', roomId, 'signalingUrl=', signalingUrl);
       if (!roomId || !signalingUrl) {
         throw new Error('Missing roomId or signalingUrl');
       }
