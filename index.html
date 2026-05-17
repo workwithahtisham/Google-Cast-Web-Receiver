@@ -299,11 +299,96 @@ let peerConnection = null;
 let pendingIce = [];
 let mirrorRoomId = null;
 let signalingSocket = null;
-let mirrorIceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
-let mirrorForceRelay = false;
-let receiverStatsTimer = null;
-let lastInboundBytesReceived = null;
-let lastInboundTimestampMs = null;
+let signalingURL = null;
+let signalingReconnectTimer = null;
+let signalingReconnectAttempts = 0;
+let statsTimer = null;
+let lastReceiverStats = null;
+const signalingReconnectBaseDelayMs = 1200;
+const signalingReconnectMaxAttempts = 8;
+
+function formatKbps(value) {
+  if (!Number.isFinite(value)) return 'n/a';
+  return `${Math.round(value)} kbps`;
+}
+
+function startReceiverStats() {
+  if (statsTimer) {
+    clearInterval(statsTimer);
+    statsTimer = null;
+  }
+  lastReceiverStats = null;
+
+  statsTimer = setInterval(async () => {
+    if (!peerConnection) return;
+
+    try {
+      const report = await peerConnection.getStats();
+
+      let inboundVideo = null;
+      let selectedCandidatePair = null;
+
+      report.forEach((stat) => {
+        if (stat.type === 'inbound-rtp' && stat.kind === 'video' && !stat.isRemote) {
+          inboundVideo = stat;
+        } else if (stat.type === 'candidate-pair' && (stat.selected || stat.nominated)) {
+          selectedCandidatePair = stat;
+        }
+      });
+
+      if (!inboundVideo) return;
+
+      let bitrateKbps = NaN;
+      if (lastReceiverStats &&
+          Number.isFinite(inboundVideo.bytesReceived) &&
+          Number.isFinite(inboundVideo.timestamp)) {
+        const bytesDelta = inboundVideo.bytesReceived - lastReceiverStats.bytesReceived;
+        const timeDeltaMs = inboundVideo.timestamp - lastReceiverStats.timestamp;
+        if (bytesDelta >= 0 && timeDeltaMs > 0) {
+          bitrateKbps = (bytesDelta * 8) / timeDeltaMs;
+        }
+      }
+
+      lastReceiverStats = {
+        bytesReceived: inboundVideo.bytesReceived || 0,
+        timestamp: inboundVideo.timestamp || 0
+      };
+
+      const width = inboundVideo.frameWidth || 0;
+      const height = inboundVideo.frameHeight || 0;
+      const fps = inboundVideo.framesPerSecond || 0;
+      const jitterMs = Number.isFinite(inboundVideo.jitter) ? (inboundVideo.jitter * 1000).toFixed(1) : 'n/a';
+      const packetsLost = Number.isFinite(inboundVideo.packetsLost) ? inboundVideo.packetsLost : 'n/a';
+      const rttMs = selectedCandidatePair && Number.isFinite(selectedCandidatePair.currentRoundTripTime)
+        ? (selectedCandidatePair.currentRoundTripTime * 1000).toFixed(1)
+        : 'n/a';
+
+      const statsMessage = `[ReceiverStats] ${width}x${height} ${fps}fps | bitrate=${formatKbps(bitrateKbps)} | jitter=${jitterMs}ms | rtt=${rttMs}ms | lost=${packetsLost}`;
+
+      console.log(statsMessage);
+      sendMirrorMessage('mirrorStats', {
+        width,
+        height,
+        fps,
+        bitrateKbps: Number.isFinite(bitrateKbps) ? Math.round(bitrateKbps) : null,
+        jitterMs,
+        rttMs,
+        packetsLost,
+        line: statsMessage
+      });
+    } catch (error) {
+      console.warn('[ReceiverStats] Failed to collect stats', error);
+    }
+  }, 3000);
+}
+
+function stopReceiverStats() {
+  if (statsTimer) {
+    clearInterval(statsTimer);
+    statsTimer = null;
+  }
+  lastReceiverStats = null;
+}
 
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
@@ -369,118 +454,23 @@ function sendSignal(payload) {
   }));
 }
 
-function startReceiverStats() {
-  stopReceiverStats();
-
-  receiverStatsTimer = setInterval(async () => {
-    if (!peerConnection) return;
-
-    try {
-      const report = await peerConnection.getStats();
-      let inboundVideo = null;
-      let selectedPair = null;
-      let localCandidate = null;
-      let remoteCandidate = null;
-
-      report.forEach((stat) => {
-        if (stat.type === 'inbound-rtp' && stat.kind === 'video' && !stat.isRemote) {
-          inboundVideo = stat;
-        } else if (stat.type === 'candidate-pair' && (stat.selected || stat.nominated)) {
-          selectedPair = stat;
-        }
-      });
-
-      if (selectedPair) {
-        const localId = selectedPair.localCandidateId;
-        const remoteId = selectedPair.remoteCandidateId;
-        report.forEach((stat) => {
-          if (localId && stat.id === localId) {
-            localCandidate = stat;
-          }
-          if (remoteId && stat.id === remoteId) {
-            remoteCandidate = stat;
-          }
-        });
-      }
-
-      if (!inboundVideo) return;
-
-      let bitrateKbps = null;
-      if (lastInboundBytesReceived !== null && lastInboundTimestampMs !== null) {
-        const bytesDelta = inboundVideo.bytesReceived - lastInboundBytesReceived;
-        const msDelta = inboundVideo.timestamp - lastInboundTimestampMs;
-        if (bytesDelta >= 0 && msDelta > 0) {
-          bitrateKbps = Math.round((bytesDelta * 8) / msDelta);
-        }
-      }
-
-      lastInboundBytesReceived = inboundVideo.bytesReceived;
-      lastInboundTimestampMs = inboundVideo.timestamp;
-
-      const width = inboundVideo.frameWidth || 0;
-      const height = inboundVideo.frameHeight || 0;
-      const fps = inboundVideo.framesPerSecond || 0;
-      const jitterMs = Number.isFinite(inboundVideo.jitter) ? (inboundVideo.jitter * 1000).toFixed(1) : 'n/a';
-      const packetsLost = Number.isFinite(inboundVideo.packetsLost) ? inboundVideo.packetsLost : 'n/a';
-      const rttMs = selectedPair && Number.isFinite(selectedPair.currentRoundTripTime)
-        ? (selectedPair.currentRoundTripTime * 1000).toFixed(1)
-        : 'n/a';
-      const availInKbps = selectedPair && Number.isFinite(selectedPair.availableIncomingBitrate)
-        ? Math.round(selectedPair.availableIncomingBitrate / 1000)
-        : null;
-
-      const path = `${localCandidate?.candidateType || 'n/a'}/${localCandidate?.protocol || 'n/a'}->${remoteCandidate?.candidateType || 'n/a'}/${remoteCandidate?.protocol || 'n/a'}`;
-      let bottleneck = 'healthy';
-      if (Number.isFinite(bitrateKbps) && bitrateKbps < 250) {
-        bottleneck = 'critical-network';
-      } else if (Number.isFinite(bitrateKbps) && bitrateKbps < 700) {
-        bottleneck = 'network-limited';
-      } else if (Number.isFinite(fps) && fps < 10) {
-        bottleneck = 'decode-or-render-limited';
-      }
-
-      const statsLine = `[ReceiverStats] net=${width}x${height} ${fps}fps | bitrate=${bitrateKbps ?? 'n/a'} kbps | jitter=${jitterMs}ms | rtt=${rttMs}ms | availIn=${availInKbps ?? 'n/a'}kbps | lost=${packetsLost} | path=${path} | bottleneck=${bottleneck}`;
-      console.log(statsLine);
-      sendMirrorMessage('mirrorStats', { line: statsLine, width, height, fps, bitrateKbps, jitterMs, packetsLost, rttMs, availableIncomingKbps: availInKbps, path, bottleneck });
-
-      const renderedWidth = mirrorVideo.videoWidth || 0;
-      const renderedHeight = mirrorVideo.videoHeight || 0;
-      let droppedFrames = null;
-      let totalFrames = null;
-      if (typeof mirrorVideo.getVideoPlaybackQuality === 'function') {
-        const q = mirrorVideo.getVideoPlaybackQuality();
-        droppedFrames = q ? q.droppedVideoFrames : null;
-        totalFrames = q ? q.totalVideoFrames : null;
-      }
-      const displayLine = `[ReceiverDisplay] render=${renderedWidth}x${renderedHeight} | totalFrames=${totalFrames ?? 'n/a'} | droppedFrames=${droppedFrames ?? 'n/a'}`;
-      console.log(displayLine);
-      sendMirrorMessage('receiverDisplayStats', { line: displayLine, renderedWidth, renderedHeight, totalFrames, droppedFrames });
-    } catch (error) {
-      console.warn('[ReceiverStats] getStats failed', error);
-    }
-  }, 3000);
-}
-
-function stopReceiverStats() {
-  if (receiverStatsTimer) {
-    clearInterval(receiverStatsTimer);
-    receiverStatsTimer = null;
-  }
-  lastInboundBytesReceived = null;
-  lastInboundTimestampMs = null;
-}
-
 function connectSignaling(signalingUrl, roomId) {
+  if (signalingReconnectTimer) {
+    clearTimeout(signalingReconnectTimer);
+    signalingReconnectTimer = null;
+  }
+
   if (signalingSocket) {
     signalingSocket.close();
     signalingSocket = null;
   }
 
   mirrorRoomId = roomId;
+  signalingURL = signalingUrl;
   signalingSocket = new WebSocket(signalingUrl);
 
   signalingSocket.onopen = () => {
-    console.log('[Receiver] signaling open room=', roomId);
+    signalingReconnectAttempts = 0;
     signalingSocket.send(JSON.stringify({
       type: 'join',
       roomId,
@@ -491,27 +481,21 @@ function connectSignaling(signalingUrl, roomId) {
   signalingSocket.onmessage = async (event) => {
     try {
       const message = JSON.parse(event.data);
-      if (message.type === 'joined') {
-        console.log('[Receiver] joined room=', roomId);
-        return;
-      }
       if (message.type !== 'signal' || !message.payload) return;
 
       const payload = message.payload;
       const signalType = payload.type;
 
       if (signalType === 'offer' && payload.sdp) {
-        console.log('[Receiver] got offer sdpLength=', payload.sdp.length);
         const pc = await createPeerConnection();
         await pc.setRemoteDescription({ type: 'offer', sdp: payload.sdp });
 
-        // Use runtime defaults for codec selection and buffering.
-        // Forced codec reordering and zero-jitter hints can collapse quality
-        // under real-world network variation on Chromecast devices.
+        // Use browser defaults for codec + buffering.
+        // For this receiver/runtime, forced H264 and custom playout hints can
+        // destabilize bitrate adaptation and cause severe downscale collapse.
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
-        console.log('[Receiver] sending answer sdpLength=', (answer.sdp || '').length);
         sendSignal({ type: 'answer', sdp: answer.sdp || '' });
         return;
       }
@@ -531,6 +515,7 @@ function connectSignaling(signalingUrl, roomId) {
         const captureHeight = payload.captureHeight || 0;
         const captureFPS = payload.captureFPS || 0;
         const peerState = payload.peerState;
+
         const line = `[SenderStats] capture=${captureWidth}x${captureHeight} ${captureFPS}fps | peerState=${peerState}`;
         console.log(line);
         sendMirrorMessage('senderStats', { line, captureWidth, captureHeight, captureFPS, peerState });
@@ -542,31 +527,11 @@ function connectSignaling(signalingUrl, roomId) {
         const encodeHeight = payload.encodeHeight || 0;
         const encodeFPS = payload.encodeFPS || 0;
         const outboundBitrateKbps = payload.outboundBitrateKbps;
-        const rttMs = payload.rttMs;
-        const availableOutgoingKbps = payload.availableOutgoingKbps;
-        const localCandidateType = payload.localCandidateType || 'n/a';
-        const localCandidateProtocol = payload.localCandidateProtocol || 'n/a';
-        const localRelayProtocol = payload.localRelayProtocol || 'n/a';
-        const remoteCandidateType = payload.remoteCandidateType || 'n/a';
-        const remoteCandidateProtocol = payload.remoteCandidateProtocol || 'n/a';
-        const bottleneck = payload.bottleneck || 'n/a';
-        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a'} | rtt=${Number.isFinite(rttMs) ? rttMs.toFixed(1) : 'n/a'}ms | availOut=${Number.isFinite(availableOutgoingKbps) ? availableOutgoingKbps : 'n/a'}kbps | path=${localCandidateType}/${localCandidateProtocol}(${localRelayProtocol})->${remoteCandidateType}/${remoteCandidateProtocol} | bottleneck=${bottleneck}`;
+        const bitrateText = Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a';
+
+        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${bitrateText}`;
         console.log(line);
-        sendMirrorMessage('senderRtcStats', {
-          line,
-          encodeWidth,
-          encodeHeight,
-          encodeFPS,
-          outboundBitrateKbps,
-          rttMs,
-          availableOutgoingKbps,
-          localCandidateType,
-          localCandidateProtocol,
-          localRelayProtocol,
-          remoteCandidateType,
-          remoteCandidateProtocol,
-          bottleneck
-        });
+        sendMirrorMessage('senderRtcStats', { line, encodeWidth, encodeHeight, encodeFPS, outboundBitrateKbps });
       }
     } catch (error) {
       console.error('[Receiver] signaling message error', error);
@@ -575,13 +540,19 @@ function connectSignaling(signalingUrl, roomId) {
   };
 
   signalingSocket.onerror = () => {
-    console.error('[Receiver] signaling socket error');
-    sendMirrorMessage('mirrorError', { message: 'Signaling socket error' });
+    console.warn('[Receiver] Signaling socket error');
   };
 
   signalingSocket.onclose = () => {
-    console.warn('[Receiver] signaling socket closed');
     signalingSocket = null;
+
+    if (mirrorMode && signalingURL && mirrorRoomId && signalingReconnectAttempts < signalingReconnectMaxAttempts) {
+      const delay = signalingReconnectBaseDelayMs * (signalingReconnectAttempts + 1);
+      signalingReconnectAttempts += 1;
+      signalingReconnectTimer = setTimeout(() => {
+        connectSignaling(signalingURL, mirrorRoomId);
+      }, delay);
+    }
   };
 }
 
@@ -589,15 +560,11 @@ async function createPeerConnection() {
   if (peerConnection) return peerConnection;
 
   peerConnection = new RTCPeerConnection({
-    iceServers: mirrorIceServers,
-    iceTransportPolicy: mirrorForceRelay ? 'relay' : 'all',
-    bundlePolicy: 'max-bundle'
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
   });
-  console.log('[Receiver] iceTransportPolicy=', mirrorForceRelay ? 'relay' : 'all');
 
   peerConnection.ontrack = (event) => {
     if (!event.streams || event.streams.length === 0) return;
-    console.log('[Receiver] ontrack stream received');
     mirrorVideo.srcObject = event.streams[0];
     setMirrorVisible(true);
     mirrorMode = true;
@@ -615,7 +582,6 @@ async function createPeerConnection() {
   peerConnection.onconnectionstatechange = () => {
     if (!peerConnection) return;
     const state = peerConnection.connectionState;
-    console.log('[Receiver] pc connectionState=', state);
     if (state === 'failed' || state === 'closed') {
       resetMirrorSession();
     }
@@ -635,7 +601,13 @@ async function createPeerConnection() {
 
 function resetMirrorSession() {
   pendingIce = [];
+  signalingReconnectAttempts = 0;
   stopReceiverStats();
+
+  if (signalingReconnectTimer) {
+    clearTimeout(signalingReconnectTimer);
+    signalingReconnectTimer = null;
+  }
 
   if (peerConnection) {
     peerConnection.ontrack = null;
@@ -651,6 +623,7 @@ function resetMirrorSession() {
   }
 
   mirrorRoomId = null;
+  signalingURL = null;
   mirrorVideo.srcObject = null;
   setMirrorVisible(false);
   mirrorMode = false;
@@ -673,11 +646,6 @@ context.addCustomMessageListener(mirrorNamespace, async (event) => {
     if (type === 'startMirrorWS') {
       const roomId = data.roomId;
       const signalingUrl = data.signalingUrl;
-      const incomingIceServers = Array.isArray(data.iceServers) ? data.iceServers : [];
-      mirrorIceServers = incomingIceServers.length > 0 ? incomingIceServers : [{ urls: 'stun:stun.l.google.com:19302' }];
-      mirrorForceRelay = Boolean(data.forceRelay);
-
-      console.log('[Receiver] startMirrorWS roomId=', roomId, 'signalingUrl=', signalingUrl, 'forceRelay=', mirrorForceRelay, 'iceServers=', JSON.stringify(mirrorIceServers));
       if (!roomId || !signalingUrl) {
         throw new Error('Missing roomId or signalingUrl');
       }
@@ -810,8 +778,15 @@ context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, (e) =
 context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (e) => {
   console.log('[Receiver] Sender disconnected:', e.senderId);
   if (e.senderId === activeSenderId) {
-    resetMirrorSession();
     activeSenderId = null;
+
+    // Keep ongoing mirroring alive when the iOS controller app exits.
+    // The broadcast extension can continue streaming over WebRTC independently.
+    if (!mirrorMode) {
+      resetMirrorSession();
+    } else {
+      console.log('[Receiver] Controller disconnected during mirroring; keeping WebRTC session active.');
+    }
   }
 });
 
