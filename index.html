@@ -377,6 +377,8 @@ function startReceiverStats() {
       const report = await peerConnection.getStats();
       let inboundVideo = null;
       let selectedPair = null;
+      let localCandidate = null;
+      let remoteCandidate = null;
 
       report.forEach((stat) => {
         if (stat.type === 'inbound-rtp' && stat.kind === 'video' && !stat.isRemote) {
@@ -385,6 +387,19 @@ function startReceiverStats() {
           selectedPair = stat;
         }
       });
+
+      if (selectedPair) {
+        const localId = selectedPair.localCandidateId;
+        const remoteId = selectedPair.remoteCandidateId;
+        report.forEach((stat) => {
+          if (localId && stat.id === localId) {
+            localCandidate = stat;
+          }
+          if (remoteId && stat.id === remoteId) {
+            remoteCandidate = stat;
+          }
+        });
+      }
 
       if (!inboundVideo) return;
 
@@ -412,9 +427,19 @@ function startReceiverStats() {
         ? Math.round(selectedPair.availableIncomingBitrate / 1000)
         : null;
 
-      const statsLine = `[ReceiverStats] net=${width}x${height} ${fps}fps | bitrate=${bitrateKbps ?? 'n/a'} kbps | jitter=${jitterMs}ms | rtt=${rttMs}ms | availIn=${availInKbps ?? 'n/a'}kbps | lost=${packetsLost}`;
+      const path = `${localCandidate?.candidateType || 'n/a'}/${localCandidate?.protocol || 'n/a'}->${remoteCandidate?.candidateType || 'n/a'}/${remoteCandidate?.protocol || 'n/a'}`;
+      let bottleneck = 'healthy';
+      if (Number.isFinite(bitrateKbps) && bitrateKbps < 250) {
+        bottleneck = 'critical-network';
+      } else if (Number.isFinite(bitrateKbps) && bitrateKbps < 700) {
+        bottleneck = 'network-limited';
+      } else if (Number.isFinite(fps) && fps < 10) {
+        bottleneck = 'decode-or-render-limited';
+      }
+
+      const statsLine = `[ReceiverStats] net=${width}x${height} ${fps}fps | bitrate=${bitrateKbps ?? 'n/a'} kbps | jitter=${jitterMs}ms | rtt=${rttMs}ms | availIn=${availInKbps ?? 'n/a'}kbps | lost=${packetsLost} | path=${path} | bottleneck=${bottleneck}`;
       console.log(statsLine);
-      sendMirrorMessage('mirrorStats', { line: statsLine, width, height, fps, bitrateKbps, jitterMs, packetsLost, rttMs, availableIncomingKbps: availInKbps });
+      sendMirrorMessage('mirrorStats', { line: statsLine, width, height, fps, bitrateKbps, jitterMs, packetsLost, rttMs, availableIncomingKbps: availInKbps, path, bottleneck });
 
       const renderedWidth = mirrorVideo.videoWidth || 0;
       const renderedHeight = mirrorVideo.videoHeight || 0;
@@ -517,9 +542,29 @@ function connectSignaling(signalingUrl, roomId) {
         const outboundBitrateKbps = payload.outboundBitrateKbps;
         const rttMs = payload.rttMs;
         const availableOutgoingKbps = payload.availableOutgoingKbps;
-        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a'} | rtt=${Number.isFinite(rttMs) ? rttMs.toFixed(1) : 'n/a'}ms | availOut=${Number.isFinite(availableOutgoingKbps) ? availableOutgoingKbps : 'n/a'}kbps`;
+        const localCandidateType = payload.localCandidateType || 'n/a';
+        const localCandidateProtocol = payload.localCandidateProtocol || 'n/a';
+        const localRelayProtocol = payload.localRelayProtocol || 'n/a';
+        const remoteCandidateType = payload.remoteCandidateType || 'n/a';
+        const remoteCandidateProtocol = payload.remoteCandidateProtocol || 'n/a';
+        const bottleneck = payload.bottleneck || 'n/a';
+        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a'} | rtt=${Number.isFinite(rttMs) ? rttMs.toFixed(1) : 'n/a'}ms | availOut=${Number.isFinite(availableOutgoingKbps) ? availableOutgoingKbps : 'n/a'}kbps | path=${localCandidateType}/${localCandidateProtocol}(${localRelayProtocol})->${remoteCandidateType}/${remoteCandidateProtocol} | bottleneck=${bottleneck}`;
         console.log(line);
-        sendMirrorMessage('senderRtcStats', { line, encodeWidth, encodeHeight, encodeFPS, outboundBitrateKbps, rttMs, availableOutgoingKbps });
+        sendMirrorMessage('senderRtcStats', {
+          line,
+          encodeWidth,
+          encodeHeight,
+          encodeFPS,
+          outboundBitrateKbps,
+          rttMs,
+          availableOutgoingKbps,
+          localCandidateType,
+          localCandidateProtocol,
+          localRelayProtocol,
+          remoteCandidateType,
+          remoteCandidateProtocol,
+          bottleneck
+        });
       }
     } catch (error) {
       console.error('[Receiver] signaling message error', error);
