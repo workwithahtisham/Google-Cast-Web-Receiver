@@ -300,6 +300,7 @@ let pendingIce = [];
 let mirrorRoomId = null;
 let signalingSocket = null;
 let mirrorIceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+let mirrorForceRelay = false;
 let receiverStatsTimer = null;
 let lastInboundBytesReceived = null;
 let lastInboundTimestampMs = null;
@@ -589,9 +590,10 @@ async function createPeerConnection() {
 
   peerConnection = new RTCPeerConnection({
     iceServers: mirrorIceServers,
-    iceTransportPolicy: 'all',
+    iceTransportPolicy: mirrorForceRelay ? 'relay' : 'all',
     bundlePolicy: 'max-bundle'
   });
+  console.log('[Receiver] iceTransportPolicy=', mirrorForceRelay ? 'relay' : 'all');
 
   peerConnection.ontrack = (event) => {
     if (!event.streams || event.streams.length === 0) return;
@@ -673,8 +675,9 @@ context.addCustomMessageListener(mirrorNamespace, async (event) => {
       const signalingUrl = data.signalingUrl;
       const incomingIceServers = Array.isArray(data.iceServers) ? data.iceServers : [];
       mirrorIceServers = incomingIceServers.length > 0 ? incomingIceServers : [{ urls: 'stun:stun.l.google.com:19302' }];
+      mirrorForceRelay = Boolean(data.forceRelay);
 
-      console.log('[Receiver] startMirrorWS roomId=', roomId, 'signalingUrl=', signalingUrl, 'iceServers=', JSON.stringify(mirrorIceServers));
+      console.log('[Receiver] startMirrorWS roomId=', roomId, 'signalingUrl=', signalingUrl, 'forceRelay=', mirrorForceRelay, 'iceServers=', JSON.stringify(mirrorIceServers));
       if (!roomId || !signalingUrl) {
         throw new Error('Missing roomId or signalingUrl');
       }
