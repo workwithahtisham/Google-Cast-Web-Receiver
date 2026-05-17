@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -402,7 +401,22 @@ function startReceiverStats() {
       const fps = inboundVideo.framesPerSecond || 0;
       const jitterMs = Number.isFinite(inboundVideo.jitter) ? (inboundVideo.jitter * 1000).toFixed(1) : 'n/a';
       const packetsLost = Number.isFinite(inboundVideo.packetsLost) ? inboundVideo.packetsLost : 'n/a';
-      console.log(`[ReceiverStats] ${width}x${height} ${fps}fps | bitrate=${bitrateKbps ?? 'n/a'} kbps | jitter=${jitterMs}ms | lost=${packetsLost}`);
+      const statsLine = `[ReceiverStats] net=${width}x${height} ${fps}fps | bitrate=${bitrateKbps ?? 'n/a'} kbps | jitter=${jitterMs}ms | lost=${packetsLost}`;
+      console.log(statsLine);
+      sendMirrorMessage('mirrorStats', { line: statsLine, width, height, fps, bitrateKbps, jitterMs, packetsLost });
+
+      const renderedWidth = mirrorVideo.videoWidth || 0;
+      const renderedHeight = mirrorVideo.videoHeight || 0;
+      let droppedFrames = null;
+      let totalFrames = null;
+      if (typeof mirrorVideo.getVideoPlaybackQuality === 'function') {
+        const q = mirrorVideo.getVideoPlaybackQuality();
+        droppedFrames = q ? q.droppedVideoFrames : null;
+        totalFrames = q ? q.totalVideoFrames : null;
+      }
+      const displayLine = `[ReceiverDisplay] render=${renderedWidth}x${renderedHeight} | totalFrames=${totalFrames ?? 'n/a'} | droppedFrames=${droppedFrames ?? 'n/a'}`;
+      console.log(displayLine);
+      sendMirrorMessage('receiverDisplayStats', { line: displayLine, renderedWidth, renderedHeight, totalFrames, droppedFrames });
     } catch (error) {
       console.warn('[ReceiverStats] getStats failed', error);
     }
@@ -471,6 +485,28 @@ function connectSignaling(signalingUrl, roomId) {
         } else {
           pendingIce.push(ice);
         }
+        return;
+      }
+
+      if (signalType === 'senderStats') {
+        const captureWidth = payload.captureWidth || 0;
+        const captureHeight = payload.captureHeight || 0;
+        const captureFPS = payload.captureFPS || 0;
+        const peerState = payload.peerState;
+        const line = `[SenderStats] capture=${captureWidth}x${captureHeight} ${captureFPS}fps | peerState=${peerState}`;
+        console.log(line);
+        sendMirrorMessage('senderStats', { line, captureWidth, captureHeight, captureFPS, peerState });
+        return;
+      }
+
+      if (signalType === 'senderRtcStats') {
+        const encodeWidth = payload.encodeWidth || 0;
+        const encodeHeight = payload.encodeHeight || 0;
+        const encodeFPS = payload.encodeFPS || 0;
+        const outboundBitrateKbps = payload.outboundBitrateKbps;
+        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a'}`;
+        console.log(line);
+        sendMirrorMessage('senderRtcStats', { line, encodeWidth, encodeHeight, encodeFPS, outboundBitrateKbps });
       }
     } catch (error) {
       console.error('[Receiver] signaling message error', error);
@@ -517,7 +553,7 @@ async function createPeerConnection() {
     if (!peerConnection) return;
     const state = peerConnection.connectionState;
     console.log('[Receiver] pc connectionState=', state);
-    if (state === 'failed' || state === 'closed' || state === 'disconnected') {
+    if (state === 'failed' || state === 'closed') {
       resetMirrorSession();
     }
   };
