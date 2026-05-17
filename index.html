@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -375,10 +376,13 @@ function startReceiverStats() {
     try {
       const report = await peerConnection.getStats();
       let inboundVideo = null;
+      let selectedPair = null;
 
       report.forEach((stat) => {
         if (stat.type === 'inbound-rtp' && stat.kind === 'video' && !stat.isRemote) {
           inboundVideo = stat;
+        } else if (stat.type === 'candidate-pair' && (stat.selected || stat.nominated)) {
+          selectedPair = stat;
         }
       });
 
@@ -401,9 +405,16 @@ function startReceiverStats() {
       const fps = inboundVideo.framesPerSecond || 0;
       const jitterMs = Number.isFinite(inboundVideo.jitter) ? (inboundVideo.jitter * 1000).toFixed(1) : 'n/a';
       const packetsLost = Number.isFinite(inboundVideo.packetsLost) ? inboundVideo.packetsLost : 'n/a';
-      const statsLine = `[ReceiverStats] net=${width}x${height} ${fps}fps | bitrate=${bitrateKbps ?? 'n/a'} kbps | jitter=${jitterMs}ms | lost=${packetsLost}`;
+      const rttMs = selectedPair && Number.isFinite(selectedPair.currentRoundTripTime)
+        ? (selectedPair.currentRoundTripTime * 1000).toFixed(1)
+        : 'n/a';
+      const availInKbps = selectedPair && Number.isFinite(selectedPair.availableIncomingBitrate)
+        ? Math.round(selectedPair.availableIncomingBitrate / 1000)
+        : null;
+
+      const statsLine = `[ReceiverStats] net=${width}x${height} ${fps}fps | bitrate=${bitrateKbps ?? 'n/a'} kbps | jitter=${jitterMs}ms | rtt=${rttMs}ms | availIn=${availInKbps ?? 'n/a'}kbps | lost=${packetsLost}`;
       console.log(statsLine);
-      sendMirrorMessage('mirrorStats', { line: statsLine, width, height, fps, bitrateKbps, jitterMs, packetsLost });
+      sendMirrorMessage('mirrorStats', { line: statsLine, width, height, fps, bitrateKbps, jitterMs, packetsLost, rttMs, availableIncomingKbps: availInKbps });
 
       const renderedWidth = mirrorVideo.videoWidth || 0;
       const renderedHeight = mirrorVideo.videoHeight || 0;
@@ -504,9 +515,11 @@ function connectSignaling(signalingUrl, roomId) {
         const encodeHeight = payload.encodeHeight || 0;
         const encodeFPS = payload.encodeFPS || 0;
         const outboundBitrateKbps = payload.outboundBitrateKbps;
-        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a'}`;
+        const rttMs = payload.rttMs;
+        const availableOutgoingKbps = payload.availableOutgoingKbps;
+        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a'} | rtt=${Number.isFinite(rttMs) ? rttMs.toFixed(1) : 'n/a'}ms | availOut=${Number.isFinite(availableOutgoingKbps) ? availableOutgoingKbps : 'n/a'}kbps`;
         console.log(line);
-        sendMirrorMessage('senderRtcStats', { line, encodeWidth, encodeHeight, encodeFPS, outboundBitrateKbps });
+        sendMirrorMessage('senderRtcStats', { line, encodeWidth, encodeHeight, encodeFPS, outboundBitrateKbps, rttMs, availableOutgoingKbps });
       }
     } catch (error) {
       console.error('[Receiver] signaling message error', error);
