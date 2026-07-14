@@ -668,6 +668,7 @@ context.addCustomMessageListener(mirrorNamespace, async (event) => {
         throw new Error('Missing roomId or signalingUrl');
       }
 
+      resetMirrorSession();
       playerManager.stop();
       showState('loading', { msg: 'Starting mirroring…' });
       connectSignaling(signalingUrl, roomId);
@@ -715,6 +716,10 @@ playerManager.setMessageInterceptor(
   cast.framework.messages.MessageType.LOAD,
   (request) => {
     const media = request.media;
+
+    if (mirrorMode) {
+      resetMirrorSession();
+    }
 
     if (!media.contentUrl && media.contentId) {
       media.contentUrl = media.contentId;
