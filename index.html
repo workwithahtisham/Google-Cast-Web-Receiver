@@ -4,8 +4,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cast Receiver</title>
-  <link rel="icon" href="data:,">
+  <title>SmartCast Pro</title>
+  <link rel="icon" href="assets/smartcast-receiver-icon.png">
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 
   <style>
@@ -67,33 +67,26 @@
     }
 
     .idle-logo {
-      font-size: 24px;
+      font-size: 28px;
       font-weight: 700;
       color: #fff;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      margin-bottom: 32px;
+      letter-spacing: 0.02em;
+      margin-bottom: 28px;
     }
 
     .cast-ring {
-      width: 72px;
-      height: 72px;
-      border-radius: 50%;
-      border: 2px solid rgba(0,212,255,0.3);
+      width: 160px;
+      height: 160px;
       display: flex;
       align-items: center;
       justify-content: center;
-      animation: ringPulse 2s ease-in-out infinite;
     }
 
-    @keyframes ringPulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(0,212,255,0.3); }
-      50%       { box-shadow: 0 0 0 20px rgba(0,212,255,0); }
-    }
-
-    .cast-ring svg {
-      width: 32px; height: 32px;
-      fill: #00d4ff;
+    .receiver-icon {
+      width: 160px;
+      height: 160px;
+      object-fit: contain;
+      image-rendering: auto;
     }
 
     .idle-label {
@@ -230,11 +223,9 @@
 
   <!-- 2. Idle screen — shown only when no content is playing -->
   <div id="idle-screen" class="overlay">
-    <div class="idle-logo">Cast Receiver</div>
+    <div class="idle-logo">SmartCast Pro</div>
     <div class="cast-ring">
-      <svg viewBox="0 0 24 24">
-        <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2a9 9 0 0 1 9 9h2C12 12.37 7.63 8 2 8zm18-7H3C1.9 2 1 2.9 1 4v3h2V4h18v16h-7v2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
-      </svg>
+      <img class="receiver-icon" src="assets/smartcast-receiver-icon.png" alt="">
     </div>
     <div class="idle-label">Ready to receive</div>
     <div id="idle-clock">
@@ -293,102 +284,13 @@ const hudFormat      = document.getElementById('hud-format');
 const mirrorVideo    = document.getElementById('mirror-video');
 
 let hasStartedPlaying = false; // track if we've ever played this session
+let currentMediaIsImage = false;
 let mirrorMode = false;
 let activeSenderId = null;
 let peerConnection = null;
 let pendingIce = [];
 let mirrorRoomId = null;
 let signalingSocket = null;
-let signalingURL = null;
-let signalingReconnectTimer = null;
-let signalingReconnectAttempts = 0;
-let statsTimer = null;
-let lastReceiverStats = null;
-const signalingReconnectBaseDelayMs = 1200;
-const signalingReconnectMaxAttempts = 8;
-
-function formatKbps(value) {
-  if (!Number.isFinite(value)) return 'n/a';
-  return `${Math.round(value)} kbps`;
-}
-
-function startReceiverStats() {
-  if (statsTimer) {
-    clearInterval(statsTimer);
-    statsTimer = null;
-  }
-  lastReceiverStats = null;
-
-  statsTimer = setInterval(async () => {
-    if (!peerConnection) return;
-
-    try {
-      const report = await peerConnection.getStats();
-
-      let inboundVideo = null;
-      let selectedCandidatePair = null;
-
-      report.forEach((stat) => {
-        if (stat.type === 'inbound-rtp' && stat.kind === 'video' && !stat.isRemote) {
-          inboundVideo = stat;
-        } else if (stat.type === 'candidate-pair' && (stat.selected || stat.nominated)) {
-          selectedCandidatePair = stat;
-        }
-      });
-
-      if (!inboundVideo) return;
-
-      let bitrateKbps = NaN;
-      if (lastReceiverStats &&
-          Number.isFinite(inboundVideo.bytesReceived) &&
-          Number.isFinite(inboundVideo.timestamp)) {
-        const bytesDelta = inboundVideo.bytesReceived - lastReceiverStats.bytesReceived;
-        const timeDeltaMs = inboundVideo.timestamp - lastReceiverStats.timestamp;
-        if (bytesDelta >= 0 && timeDeltaMs > 0) {
-          bitrateKbps = (bytesDelta * 8) / timeDeltaMs;
-        }
-      }
-
-      lastReceiverStats = {
-        bytesReceived: inboundVideo.bytesReceived || 0,
-        timestamp: inboundVideo.timestamp || 0
-      };
-
-      const width = inboundVideo.frameWidth || 0;
-      const height = inboundVideo.frameHeight || 0;
-      const fps = inboundVideo.framesPerSecond || 0;
-      const jitterMs = Number.isFinite(inboundVideo.jitter) ? (inboundVideo.jitter * 1000).toFixed(1) : 'n/a';
-      const packetsLost = Number.isFinite(inboundVideo.packetsLost) ? inboundVideo.packetsLost : 'n/a';
-      const rttMs = selectedCandidatePair && Number.isFinite(selectedCandidatePair.currentRoundTripTime)
-        ? (selectedCandidatePair.currentRoundTripTime * 1000).toFixed(1)
-        : 'n/a';
-
-      const statsMessage = `[ReceiverStats] ${width}x${height} ${fps}fps | bitrate=${formatKbps(bitrateKbps)} | jitter=${jitterMs}ms | rtt=${rttMs}ms | lost=${packetsLost}`;
-
-      console.log(statsMessage);
-      sendMirrorMessage('mirrorStats', {
-        width,
-        height,
-        fps,
-        bitrateKbps: Number.isFinite(bitrateKbps) ? Math.round(bitrateKbps) : null,
-        jitterMs,
-        rttMs,
-        packetsLost,
-        line: statsMessage
-      });
-    } catch (error) {
-      console.warn('[ReceiverStats] Failed to collect stats', error);
-    }
-  }, 3000);
-}
-
-function stopReceiverStats() {
-  if (statsTimer) {
-    clearInterval(statsTimer);
-    statsTimer = null;
-  }
-  lastReceiverStats = null;
-}
 
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
@@ -400,6 +302,8 @@ function showState(state, opts = {}) {
   switch (state) {
     case 'idle':
       hasStartedPlaying = false;
+      currentMediaIsImage = false;
+      hudFormat.style.display = 'none';
       idleScreen.classList.remove('hidden');
       break;
 
@@ -412,8 +316,10 @@ function showState(state, opts = {}) {
 
     case 'playing':
       hasStartedPlaying = true;
-      hudState.textContent = 'PLAYING';
-      hud.classList.add('visible');
+      if (!currentMediaIsImage) {
+        hudState.textContent = 'PLAYING';
+        hud.classList.add('visible');
+      }
       break;
 
     case 'mirroring':
@@ -423,8 +329,10 @@ function showState(state, opts = {}) {
       break;
 
     case 'paused':
-      hudState.textContent = 'PAUSED';
-      hud.classList.add('visible');
+      if (!currentMediaIsImage) {
+        hudState.textContent = 'PAUSED';
+        hud.classList.add('visible');
+      }
       break;
 
     case 'error':
@@ -455,22 +363,15 @@ function sendSignal(payload) {
 }
 
 function connectSignaling(signalingUrl, roomId) {
-  if (signalingReconnectTimer) {
-    clearTimeout(signalingReconnectTimer);
-    signalingReconnectTimer = null;
-  }
-
   if (signalingSocket) {
     signalingSocket.close();
     signalingSocket = null;
   }
 
   mirrorRoomId = roomId;
-  signalingURL = signalingUrl;
   signalingSocket = new WebSocket(signalingUrl);
 
   signalingSocket.onopen = () => {
-    signalingReconnectAttempts = 0;
     signalingSocket.send(JSON.stringify({
       type: 'join',
       roomId,
@@ -490,9 +391,30 @@ function connectSignaling(signalingUrl, roomId) {
         const pc = await createPeerConnection();
         await pc.setRemoteDescription({ type: 'offer', sdp: payload.sdp });
 
-        // Use browser defaults for codec + buffering.
-        // For this receiver/runtime, forced H264 and custom playout hints can
-        // destabilize bitrate adaptation and cause severe downscale collapse.
+        // Prefer H264 for better text/detail quality on many TV decoders.
+        const caps = RTCRtpReceiver.getCapabilities ? RTCRtpReceiver.getCapabilities('video') : null;
+        if (caps && caps.codecs && caps.codecs.length > 0) {
+          const h264 = caps.codecs.filter((c) => c.mimeType && c.mimeType.toLowerCase() === 'video/h264');
+          const others = caps.codecs.filter((c) => !c.mimeType || c.mimeType.toLowerCase() !== 'video/h264');
+          const preferred = [...h264, ...others];
+          pc.getTransceivers().forEach((t) => {
+            if (t.receiver && t.receiver.track && t.receiver.track.kind === 'video' && t.setCodecPreferences) {
+              t.setCodecPreferences(preferred);
+            }
+          });
+        }
+
+        // Low latency playback hints (best-effort, browser-dependent).
+        pc.getReceivers().forEach((r) => {
+          if (r.track && r.track.kind === 'video') {
+            if ('playoutDelayHint' in r) {
+              r.playoutDelayHint = 0;
+            }
+            if ('jitterBufferTarget' in r) {
+              r.jitterBufferTarget = 0;
+            }
+          }
+        });
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -507,31 +429,6 @@ function connectSignaling(signalingUrl, roomId) {
         } else {
           pendingIce.push(ice);
         }
-        return;
-      }
-
-      if (signalType === 'senderStats') {
-        const captureWidth = payload.captureWidth || 0;
-        const captureHeight = payload.captureHeight || 0;
-        const captureFPS = payload.captureFPS || 0;
-        const peerState = payload.peerState;
-
-        const line = `[SenderStats] capture=${captureWidth}x${captureHeight} ${captureFPS}fps | peerState=${peerState}`;
-        console.log(line);
-        sendMirrorMessage('senderStats', { line, captureWidth, captureHeight, captureFPS, peerState });
-        return;
-      }
-
-      if (signalType === 'senderRtcStats') {
-        const encodeWidth = payload.encodeWidth || 0;
-        const encodeHeight = payload.encodeHeight || 0;
-        const encodeFPS = payload.encodeFPS || 0;
-        const outboundBitrateKbps = payload.outboundBitrateKbps;
-        const bitrateText = Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a';
-
-        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${bitrateText}`;
-        console.log(line);
-        sendMirrorMessage('senderRtcStats', { line, encodeWidth, encodeHeight, encodeFPS, outboundBitrateKbps });
       }
     } catch (error) {
       console.error('[Receiver] signaling message error', error);
@@ -540,45 +437,26 @@ function connectSignaling(signalingUrl, roomId) {
   };
 
   signalingSocket.onerror = () => {
-    console.warn('[Receiver] Signaling socket error');
+    sendMirrorMessage('mirrorError', { message: 'Signaling socket error' });
   };
 
   signalingSocket.onclose = () => {
     signalingSocket = null;
-
-    if (mirrorMode && signalingURL && mirrorRoomId && signalingReconnectAttempts < signalingReconnectMaxAttempts) {
-      const delay = signalingReconnectBaseDelayMs * (signalingReconnectAttempts + 1);
-      signalingReconnectAttempts += 1;
-      signalingReconnectTimer = setTimeout(() => {
-        connectSignaling(signalingURL, mirrorRoomId);
-      }, delay);
-    }
   };
 }
 
 async function createPeerConnection() {
   if (peerConnection) return peerConnection;
 
-peerConnection = new RTCPeerConnection({
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    {
-      urls: [
-        'turn:129.80.98.178:3478?transport=udp',
-        'turn:129.80.98.178:3478?transport=tcp'
-      ],
-      username: 'castify',
-      credential: 'smartcastpro-secret'
-    }
-  ]
-});
+  peerConnection = new RTCPeerConnection({
+    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+  });
 
   peerConnection.ontrack = (event) => {
     if (!event.streams || event.streams.length === 0) return;
     mirrorVideo.srcObject = event.streams[0];
     setMirrorVisible(true);
     mirrorMode = true;
-    startReceiverStats();
     showState('mirroring');
     sendMirrorMessage('mirrorStarted');
   };
@@ -611,13 +489,6 @@ peerConnection = new RTCPeerConnection({
 
 function resetMirrorSession() {
   pendingIce = [];
-  signalingReconnectAttempts = 0;
-  stopReceiverStats();
-
-  if (signalingReconnectTimer) {
-    clearTimeout(signalingReconnectTimer);
-    signalingReconnectTimer = null;
-  }
 
   if (peerConnection) {
     peerConnection.ontrack = null;
@@ -633,7 +504,6 @@ function resetMirrorSession() {
   }
 
   mirrorRoomId = null;
-  signalingURL = null;
   mirrorVideo.srcObject = null;
   setMirrorVisible(false);
   mirrorMode = false;
@@ -677,6 +547,10 @@ context.addCustomMessageListener(mirrorNamespace, async (event) => {
 });
 
 // --- MIME detection ---
+function isImageMime(contentType) {
+  return (contentType || '').toLowerCase().startsWith('image/');
+}
+
 function detectMime(url) {
   const u = (url || '').split('?')[0].toLowerCase();
   if (u.endsWith('.m3u8'))  return 'application/x-mpegURL';
@@ -716,9 +590,15 @@ playerManager.setMessageInterceptor(
       media.contentType = detectMime(media.contentUrl);
     }
 
-    const fmt = media.contentType.split('/')[1]?.toUpperCase() || 'VIDEO';
-    hudFormat.textContent = fmt;
-    hudFormat.style.display = 'flex';
+    currentMediaIsImage = isImageMime(media.contentType);
+
+    if (currentMediaIsImage) {
+      hudFormat.style.display = 'none';
+    } else {
+      const fmt = media.contentType.split('/')[1]?.toUpperCase() || 'VIDEO';
+      hudFormat.textContent = fmt;
+      hudFormat.style.display = 'flex';
+    }
 
     showState('loading', { msg: 'Loading media…' });
 
@@ -788,15 +668,8 @@ context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, (e) =
 context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (e) => {
   console.log('[Receiver] Sender disconnected:', e.senderId);
   if (e.senderId === activeSenderId) {
+    resetMirrorSession();
     activeSenderId = null;
-
-    // Keep ongoing mirroring alive when the iOS controller app exits.
-    // The broadcast extension can continue streaming over WebRTC independently.
-    if (!mirrorMode) {
-      resetMirrorSession();
-    } else {
-      console.log('[Receiver] Controller disconnected during mirroring; keeping WebRTC session active.');
-    }
   }
 });
 
