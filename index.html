@@ -230,7 +230,7 @@
 
   <!-- 2. Idle screen — shown only when no content is playing -->
   <div id="idle-screen" class="overlay">
-    <div class="idle-logo">Cast Receiver</div>
+    <div class="idle-logo">SmartCast Pro</div>
     <div class="cast-ring">
       <svg viewBox="0 0 24 24">
         <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2a9 9 0 0 1 9 9h2C12 12.37 7.63 8 2 8zm18-7H3C1.9 2 1 2.9 1 4v3h2V4h18v16h-7v2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
@@ -293,6 +293,7 @@ const hudFormat      = document.getElementById('hud-format');
 const mirrorVideo    = document.getElementById('mirror-video');
 
 let hasStartedPlaying = false; // track if we've ever played this session
+let isPhotoContent = false;
 let mirrorMode = false;
 let activeSenderId = null;
 let peerConnection = null;
@@ -413,7 +414,9 @@ function showState(state, opts = {}) {
     case 'playing':
       hasStartedPlaying = true;
       hudState.textContent = 'PLAYING';
-      hud.classList.add('visible');
+      if (!isPhotoContent) {
+        hud.classList.add('visible');
+      }
       break;
 
     case 'mirroring':
@@ -424,7 +427,9 @@ function showState(state, opts = {}) {
 
     case 'paused':
       hudState.textContent = 'PAUSED';
-      hud.classList.add('visible');
+      if (!isPhotoContent) {
+        hud.classList.add('visible');
+      }
       break;
 
     case 'error':
@@ -718,6 +723,8 @@ playerManager.setMessageInterceptor(
     if (!media.contentType) {
       media.contentType = detectMime(media.contentUrl);
     }
+
+    isPhotoContent = media.contentType.startsWith('image/');
 
     const fmt = media.contentType.split('/')[1]?.toUpperCase() || 'VIDEO';
     hudFormat.textContent = fmt;
