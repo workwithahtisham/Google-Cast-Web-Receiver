@@ -27,6 +27,7 @@
       background: var(--ink);
       overflow: hidden;
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --playback-logo-image: none;
     }
 
     /* The player must remain the base layer. */
@@ -37,7 +38,11 @@
       display: block;
       z-index: 1;
       --theme-hue: 190;
-      --progress-color: var(--cyan);
+      --progress-color: rgba(0,0,0,0);
+      --play-image: none;
+      --pause-image: none;
+      --buffering-image: none;
+      --watermark-image: none;
       --splash-image: none;
       --splash-color: #000000;
     }
@@ -114,16 +119,16 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 24px;
-      padding: 44px 58px 40px;
-      min-width: min(580px, calc(100vw - 56px));
-      border: 1px solid var(--line);
-      border-radius: 30px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.105), rgba(255,255,255,0.035));
+      gap: 22px;
+      padding: 34px 48px 34px;
+      min-width: min(520px, calc(100vw - 72px));
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 32px;
+      background: linear-gradient(180deg, rgba(5,18,24,0.52), rgba(3,8,12,0.24));
       box-shadow:
-        0 34px 90px rgba(0,0,0,0.48),
-        inset 0 1px 0 rgba(255,255,255,0.16);
-      backdrop-filter: blur(20px);
+        0 34px 110px rgba(0,0,0,0.42),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+      backdrop-filter: blur(12px);
     }
 
     .idle-logo {
@@ -137,33 +142,28 @@
 
     .cast-ring {
       position: relative;
-      width: 206px;
-      height: 206px;
+      width: 214px;
+      height: 214px;
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: 34px;
-      background:
-        linear-gradient(145deg, rgba(0,227,253,0.28), rgba(124,92,255,0.12)),
-        rgba(255,255,255,0.045);
-      border: 1px solid rgba(255,255,255,0.14);
-      box-shadow:
-        0 0 46px rgba(0,227,253,0.22),
-        inset 0 1px 0 rgba(255,255,255,0.2);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(0,227,253,0.22) 0%, rgba(0,227,253,0.08) 42%, rgba(0,0,0,0) 68%);
+      box-shadow: 0 0 70px rgba(0,227,253,0.18);
     }
 
     .cast-ring::before,
     .cast-ring::after {
       content: "";
       position: absolute;
-      border: 1px solid rgba(0,227,253,0.34);
-      border-radius: 38px;
+      border: 1px solid rgba(0,227,253,0.32);
+      border-radius: 50%;
       opacity: 0;
       animation: signalPulse 3.2s ease-out infinite;
     }
 
-    .cast-ring::before { inset: -16px; }
-    .cast-ring::after { inset: -31px; animation-delay: 1.2s; }
+    .cast-ring::before { inset: 8px; }
+    .cast-ring::after { inset: -10px; animation-delay: 1.2s; }
 
     @keyframes signalPulse {
       0% { transform: scale(0.94); opacity: 0; }
@@ -172,11 +172,16 @@
     }
 
     .receiver-icon {
-      width: 176px;
-      height: 176px;
+      width: 178px;
+      height: 178px;
       object-fit: contain;
       image-rendering: auto;
-      filter: drop-shadow(0 0 24px rgba(0,227,253,0.56));
+      mix-blend-mode: screen;
+      filter:
+        brightness(1.08)
+        contrast(1.08)
+        saturate(1.08)
+        drop-shadow(0 0 26px rgba(0,227,253,0.58));
     }
 
     .idle-label {
@@ -229,20 +234,20 @@
 
     #idle-clock {
       position: fixed;
-      bottom: 46px;
-      right: 56px;
+      top: 38px;
+      right: 46px;
       text-align: right;
       pointer-events: none;
       z-index: 2;
-      padding: 14px 16px;
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 18px;
-      background: rgba(0,0,0,0.24);
-      backdrop-filter: blur(14px);
+      padding: 12px 14px;
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      background: rgba(0,0,0,0.18);
+      backdrop-filter: blur(10px);
     }
 
     #clock-time {
-      font-size: 54px;
+      font-size: 42px;
       font-weight: 300;
       color: var(--text);
       letter-spacing: 0;
@@ -251,8 +256,8 @@
     }
 
     #clock-date {
-      font-size: 13px;
-      color: rgba(247,251,255,0.52);
+      font-size: 12px;
+      color: rgba(247,251,255,0.5);
       letter-spacing: 0.08em;
       text-transform: uppercase;
       margin-top: 7px;
@@ -379,7 +384,7 @@
       .idle-shell {
         min-width: auto;
         width: calc(100vw - 34px);
-        padding: 34px 24px 32px;
+        padding: 30px 24px 30px;
         border-radius: 24px;
       }
 
@@ -394,11 +399,11 @@
       }
 
       #idle-clock {
-        right: 20px;
-        bottom: 22px;
+        top: 18px;
+        right: 18px;
       }
 
-      #clock-time { font-size: 38px; }
+      #clock-time { font-size: 34px; }
       #hud { left: 18px; top: 18px; }
     }
   </style>
@@ -482,6 +487,7 @@ const hud            = document.getElementById('hud');
 const hudState       = document.getElementById('hud-state');
 const hudFormat      = document.getElementById('hud-format');
 const mirrorVideo    = document.getElementById('mirror-video');
+const castPlayer     = document.querySelector('cast-media-player');
 
 let hasStartedPlaying = false; // track if we've ever played this session
 let currentMediaIsImage = false;
@@ -491,6 +497,41 @@ let peerConnection = null;
 let pendingIce = [];
 let mirrorRoomId = null;
 let signalingSocket = null;
+
+function suppressBuiltInPlayerChrome() {
+  if (!castPlayer) return;
+
+  castPlayer.style.setProperty('--progress-color', 'rgba(0,0,0,0)');
+  castPlayer.style.setProperty('--play-image', 'none');
+  castPlayer.style.setProperty('--pause-image', 'none');
+  castPlayer.style.setProperty('--buffering-image', 'none');
+  castPlayer.style.setProperty('--watermark-image', 'none');
+
+  const root = castPlayer.shadowRoot;
+  if (!root || root.getElementById('smartcast-hide-player-chrome')) return;
+
+  const style = document.createElement('style');
+  style.id = 'smartcast-hide-player-chrome';
+  style.textContent = `
+    .controls,
+    .controls-container,
+    .media-controls,
+    .metadata,
+    .metadata-container,
+    .progress,
+    .progress-bar,
+    .progressBar,
+    .seek-bar,
+    .scrubber,
+    .watermark,
+    .playback-logo {
+      display: none !important;
+      opacity: 0 !important;
+      visibility: hidden !important;
+    }
+  `;
+  root.appendChild(style);
+}
 
 // --- Single state machine: only one screen at a time ---
 function showState(state, opts = {}) {
@@ -516,10 +557,8 @@ function showState(state, opts = {}) {
 
     case 'playing':
       hasStartedPlaying = true;
-      if (!currentMediaIsImage) {
-        hudState.textContent = 'PLAYING';
-        hud.classList.add('visible');
-      }
+      hudFormat.style.display = 'none';
+      suppressBuiltInPlayerChrome();
       break;
 
     case 'mirroring':
@@ -529,10 +568,8 @@ function showState(state, opts = {}) {
       break;
 
     case 'paused':
-      if (!currentMediaIsImage) {
-        hudState.textContent = 'PAUSED';
-        hud.classList.add('visible');
-      }
+      hudFormat.style.display = 'none';
+      suppressBuiltInPlayerChrome();
       break;
 
     case 'error':
@@ -792,15 +829,10 @@ playerManager.setMessageInterceptor(
 
     currentMediaIsImage = isImageMime(media.contentType);
 
-    if (currentMediaIsImage) {
-      hudFormat.style.display = 'none';
-    } else {
-      const fmt = media.contentType.split('/')[1]?.toUpperCase() || 'VIDEO';
-      hudFormat.textContent = fmt;
-      hudFormat.style.display = 'flex';
-    }
+    hudFormat.style.display = 'none';
 
     showState('loading', { msg: 'Loading media…' });
+    suppressBuiltInPlayerChrome();
 
     return request;
   }
@@ -858,6 +890,7 @@ playerManager.addEventListener(EV.ENDED, () => {
 /* ── CONTEXT EVENTS ── */
 context.addEventListener(cast.framework.system.EventType.READY, () => {
   console.log('[Receiver] Ready');
+  suppressBuiltInPlayerChrome();
   showState('idle');
 });
 
