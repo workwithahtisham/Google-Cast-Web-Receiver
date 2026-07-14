@@ -4,45 +4,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SmartCast Pro</title>
-  <link rel="icon" href="assets/smartcast-receiver-icon.png">
+  <title>Cast Receiver</title>
+  <link rel="icon" href="data:,">
   <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    :root {
-      --cyan: #00e3fd;
-      --mint: #4dffbe;
-      --violet: #7c5cff;
-      --ink: #020407;
-      --text: #f7fbff;
-      --muted: rgba(247,251,255,0.62);
-      --panel: rgba(8,18,24,0.74);
-      --line: rgba(255,255,255,0.13);
-    }
-
     html, body {
       width: 100%; height: 100%;
-      background: var(--ink);
+      background: #000;
       overflow: hidden;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --playback-logo-image: none;
+      font-family: Arial, sans-serif;
     }
 
-    /* The player must remain the base layer. */
+    /* ── The player MUST be the base layer, never covered ── */
     cast-media-player {
       position: fixed;
       top: 0; left: 0;
       width: 100%; height: 100%;
       display: block;
       z-index: 1;
-      --theme-hue: 190;
-      --progress-color: rgba(0,0,0,0);
-      --play-image: none;
-      --pause-image: none;
-      --buffering-image: none;
-      --watermark-image: none;
+      --theme-hue: 195;
+      --progress-color: #00d4ff;
       --splash-image: none;
       --splash-color: #000000;
     }
@@ -59,352 +43,181 @@
       display: none;
     }
 
+    /* ── All overlays sit above but ONLY shown when needed ── */
     .overlay {
       position: fixed;
-      inset: 0;
+      top: 0; left: 0;
       width: 100%; height: 100%;
       z-index: 10;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      pointer-events: none;
+      pointer-events: none; /* never block touch/input on player */
     }
 
-    .overlay.hidden { display: none; }
-
-    #idle-screen,
-    #loading-overlay,
-    #error-overlay {
-      background:
-        linear-gradient(125deg, rgba(0,227,253,0.18) 0%, rgba(0,0,0,0) 36%),
-        linear-gradient(235deg, rgba(124,92,255,0.16) 0%, rgba(0,0,0,0) 34%),
-        linear-gradient(180deg, #041018 0%, #020407 52%, #000000 100%);
+    /* Hidden state */
+    .overlay.hidden {
+      display: none;
     }
 
-    #idle-screen::before,
-    #idle-screen::after {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-    }
-
-    #idle-screen::before {
-      background-image:
-        linear-gradient(rgba(255,255,255,0.05) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px);
-      background-size: 72px 72px;
-      -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,0.75), transparent 78%);
-      mask-image: linear-gradient(to bottom, rgba(0,0,0,0.75), transparent 78%);
-      opacity: 0.38;
-    }
-
-    #idle-screen::after {
-      background:
-        linear-gradient(100deg, transparent 0%, rgba(0,227,253,0.18) 46%, transparent 56%),
-        linear-gradient(42deg, transparent 0%, rgba(77,255,190,0.11) 38%, transparent 48%);
-      animation: sweep 9s ease-in-out infinite alternate;
-      opacity: 0.56;
-    }
-
-    @keyframes sweep {
-      from { transform: translateX(-5%) translateY(2%); }
-      to { transform: translateX(5%) translateY(-2%); }
-    }
-
-    .idle-shell {
-      position: relative;
-      z-index: 2;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 22px;
-      padding: 34px 48px 34px;
-      min-width: min(520px, calc(100vw - 72px));
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 32px;
-      background: linear-gradient(180deg, rgba(5,18,24,0.52), rgba(3,8,12,0.24));
-      box-shadow:
-        0 34px 110px rgba(0,0,0,0.42),
-        inset 0 1px 0 rgba(255,255,255,0.10);
-      backdrop-filter: blur(12px);
+    /* ── Idle Screen ── */
+    #idle-screen {
+      background: #000;
     }
 
     .idle-logo {
-      font-size: clamp(38px, 5vw, 72px);
-      font-weight: 800;
-      color: var(--text);
-      letter-spacing: 0;
-      line-height: 1;
-      text-shadow: 0 0 34px rgba(0,227,253,0.18);
+      font-size: 24px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      margin-bottom: 32px;
     }
 
     .cast-ring {
-      position: relative;
-      width: 214px;
-      height: 214px;
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 2px solid rgba(0,212,255,0.3);
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(0,227,253,0.22) 0%, rgba(0,227,253,0.08) 42%, rgba(0,0,0,0) 68%);
-      box-shadow: 0 0 70px rgba(0,227,253,0.18);
+      animation: ringPulse 2s ease-in-out infinite;
     }
 
-    .cast-ring::before,
-    .cast-ring::after {
-      content: "";
-      position: absolute;
-      border: 1px solid rgba(0,227,253,0.32);
-      border-radius: 50%;
-      opacity: 0;
-      animation: signalPulse 3.2s ease-out infinite;
+    @keyframes ringPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0,212,255,0.3); }
+      50%       { box-shadow: 0 0 0 20px rgba(0,212,255,0); }
     }
 
-    .cast-ring::before { inset: 8px; }
-    .cast-ring::after { inset: -10px; animation-delay: 1.2s; }
-
-    @keyframes signalPulse {
-      0% { transform: scale(0.94); opacity: 0; }
-      25% { opacity: 0.58; }
-      100% { transform: scale(1.08); opacity: 0; }
-    }
-
-    .receiver-icon {
-      width: 178px;
-      height: 178px;
-      object-fit: contain;
-      image-rendering: auto;
-      mix-blend-mode: screen;
-      filter:
-        brightness(1.08)
-        contrast(1.08)
-        saturate(1.08)
-        drop-shadow(0 0 26px rgba(0,227,253,0.58));
+    .cast-ring svg {
+      width: 32px; height: 32px;
+      fill: #00d4ff;
     }
 
     .idle-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 16px;
-      border-radius: 999px;
-      background: rgba(0,0,0,0.28);
-      border: 1px solid rgba(255,255,255,0.11);
-      font-size: 15px;
-      font-weight: 600;
-      color: var(--muted);
-    }
-
-    .ready-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--mint);
-      box-shadow: 0 0 18px rgba(77,255,190,0.8);
-      animation: blink 1.8s ease-in-out infinite;
-    }
-
-    .signal-bars {
-      display: flex;
-      align-items: flex-end;
-      gap: 8px;
-      height: 36px;
-      margin-top: 4px;
-    }
-
-    .signal-bars span {
-      display: block;
-      width: 7px;
-      border-radius: 999px;
-      background: linear-gradient(180deg, var(--cyan), var(--mint));
-      box-shadow: 0 0 18px rgba(0,227,253,0.42);
-      animation: barRise 1.35s ease-in-out infinite;
-    }
-
-    .signal-bars span:nth-child(1) { height: 13px; animation-delay: 0s; }
-    .signal-bars span:nth-child(2) { height: 22px; animation-delay: 0.15s; }
-    .signal-bars span:nth-child(3) { height: 31px; animation-delay: 0.3s; }
-
-    @keyframes barRise {
-      0%, 100% { transform: scaleY(0.72); opacity: 0.55; }
-      50% { transform: scaleY(1); opacity: 1; }
+      margin-top: 20px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.5);
     }
 
     #idle-clock {
       position: fixed;
-      top: 38px;
-      right: 46px;
+      bottom: 48px;
+      right: 56px;
       text-align: right;
       pointer-events: none;
-      z-index: 2;
-      padding: 12px 14px;
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 16px;
-      background: rgba(0,0,0,0.18);
-      backdrop-filter: blur(10px);
     }
 
     #clock-time {
-      font-size: 42px;
+      font-size: 52px;
       font-weight: 300;
-      color: var(--text);
-      letter-spacing: 0;
+      color: #fff;
+      letter-spacing: -0.02em;
       line-height: 1;
-      font-variant-numeric: tabular-nums;
     }
 
     #clock-date {
-      font-size: 12px;
-      color: rgba(247,251,255,0.5);
+      font-size: 13px;
+      color: rgba(255,255,255,0.4);
       letter-spacing: 0.08em;
       text-transform: uppercase;
-      margin-top: 7px;
+      margin-top: 6px;
     }
 
-    .loading-card,
-    .error-card {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      max-width: 430px;
-      padding: 34px 38px;
-      border: 1px solid var(--line);
-      border-radius: 26px;
-      background: var(--panel);
-      box-shadow: 0 28px 80px rgba(0,0,0,0.48), inset 0 1px 0 rgba(255,255,255,0.12);
-      backdrop-filter: blur(18px);
+    /* ── Loading Overlay ── */
+    #loading-overlay {
+      background: #000;
     }
 
     .spinner {
-      width: 54px; height: 54px;
-      border: 3px solid rgba(255,255,255,0.11);
-      border-top-color: var(--cyan);
-      border-right-color: var(--mint);
+      width: 48px; height: 48px;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: #00d4ff;
       border-radius: 50%;
       animation: spin 0.9s linear infinite;
-      margin-bottom: 18px;
-      box-shadow: 0 0 28px rgba(0,227,253,0.18);
+      margin-bottom: 16px;
     }
 
     @keyframes spin { to { transform: rotate(360deg); } }
 
     #loader-status {
-      font-size: 16px;
-      font-weight: 600;
-      color: rgba(247,251,255,0.76);
+      font-size: 14px;
+      color: rgba(255,255,255,0.55);
+    }
+
+    /* ── Error Overlay ── */
+    #error-overlay {
+      background: #0a0a0a;
     }
 
     .error-icon {
-      width: 52px;
-      height: 52px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 16px;
-      background: rgba(255,82,82,0.14);
-      border: 1px solid rgba(255,120,120,0.28);
-      color: #ff7a7a;
-      font-size: 28px;
-      font-weight: 800;
-      margin-bottom: 18px;
+      font-size: 40px;
+      margin-bottom: 16px;
     }
 
     .error-title {
-      font-size: 22px;
-      font-weight: 750;
-      color: var(--text);
+      font-size: 20px;
+      font-weight: 600;
+      color: #fff;
       margin-bottom: 8px;
     }
 
     .error-msg {
       font-size: 14px;
-      color: var(--muted);
+      color: rgba(255,255,255,0.55);
       text-align: center;
       max-width: 400px;
       line-height: 1.6;
     }
 
     .error-code {
-      margin-top: 12px;
+      margin-top: 10px;
       font-size: 11px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      color: rgba(247,251,255,0.34);
+      font-family: monospace;
+      color: rgba(255,255,255,0.25);
     }
 
+    /* ── HUD pills — float above player, never block it ── */
     #hud {
       position: fixed;
-      top: 26px;
+      top: 24px;
       left: 32px;
       z-index: 20;
       display: flex;
-      gap: 10px;
+      gap: 8px;
       pointer-events: none;
       opacity: 0;
-      transition: opacity 0.4s ease, transform 0.4s ease;
-      transform: translateY(-6px);
+      transition: opacity 0.4s;
     }
 
-    #hud.visible {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    #hud.visible { opacity: 1; }
 
     .hud-pill {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 13px;
-      background: rgba(2,8,12,0.64);
-      border: 1px solid rgba(255,255,255,0.13);
-      border-radius: 999px;
-      font-size: 12px;
-      color: rgba(247,251,255,0.82);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      letter-spacing: 0.04em;
-      box-shadow: 0 14px 40px rgba(0,0,0,0.28);
-      backdrop-filter: blur(14px);
+      gap: 6px;
+      padding: 4px 10px;
+      background: rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.7);
+      font-family: monospace;
+      letter-spacing: 0.05em;
     }
 
     .live-dot {
-      width: 7px; height: 7px;
+      width: 6px; height: 6px;
       border-radius: 50%;
-      background: var(--cyan);
-      box-shadow: 0 0 16px rgba(0,227,253,0.8);
+      background: #00d4ff;
       animation: blink 1.8s ease-in-out infinite;
     }
 
     @keyframes blink {
       0%, 100% { opacity: 1; }
-      50% { opacity: 0.28; }
-    }
-
-    @media (max-width: 720px) {
-      .idle-shell {
-        min-width: auto;
-        width: calc(100vw - 34px);
-        padding: 30px 24px 30px;
-        border-radius: 24px;
-      }
-
-      .cast-ring {
-        width: 176px;
-        height: 176px;
-      }
-
-      .receiver-icon {
-        width: 148px;
-        height: 148px;
-      }
-
-      #idle-clock {
-        top: 18px;
-        right: 18px;
-      }
-
-      #clock-time { font-size: 34px; }
-      #hud { left: 18px; top: 18px; }
+      50%       { opacity: 0.2; }
     }
   </style>
 </head>
@@ -417,18 +230,13 @@
 
   <!-- 2. Idle screen — shown only when no content is playing -->
   <div id="idle-screen" class="overlay">
-    <div class="idle-shell">
-      <div class="cast-ring">
-        <img class="receiver-icon" src="assets/smartcast-receiver-icon.png" alt="">
-      </div>
-      <div class="idle-logo">SmartCast Pro</div>
-      <div class="idle-label"><span class="ready-dot"></span>Ready to receive</div>
-      <div class="signal-bars" aria-hidden="true">
-        <span></span>
-        <span></span>
-        <span></span>
-      </div>
+    <div class="idle-logo">Cast Receiver</div>
+    <div class="cast-ring">
+      <svg viewBox="0 0 24 24">
+        <path d="M1 18v3h3c0-1.66-1.34-3-3-3zm0-4v2c2.76 0 5 2.24 5 5h2c0-3.87-3.13-7-7-7zm0-4v2a9 9 0 0 1 9 9h2C12 12.37 7.63 8 2 8zm18-7H3C1.9 2 1 2.9 1 4v3h2V4h18v16h-7v2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/>
+      </svg>
     </div>
+    <div class="idle-label">Ready to receive</div>
     <div id="idle-clock">
       <div id="clock-time">00:00</div>
       <div id="clock-date"></div>
@@ -437,20 +245,16 @@
 
   <!-- 3. Loading — shown only while media is preparing (before first frame) -->
   <div id="loading-overlay" class="overlay hidden">
-    <div class="loading-card">
-      <div class="spinner"></div>
-      <div id="loader-status">Loading…</div>
-    </div>
+    <div class="spinner"></div>
+    <div id="loader-status">Loading…</div>
   </div>
 
   <!-- 4. Error — shown only on failure -->
   <div id="error-overlay" class="overlay hidden">
-    <div class="error-card">
-      <div class="error-icon">!</div>
-      <div class="error-title">Playback Error</div>
-      <div class="error-msg" id="error-msg">Unable to play this media.</div>
-      <div class="error-code" id="error-code"></div>
-    </div>
+    <div class="error-icon">⚠️</div>
+    <div class="error-title">Playback Error</div>
+    <div class="error-msg" id="error-msg">Unable to play this media.</div>
+    <div class="error-code" id="error-code"></div>
   </div>
 
   <!-- 5. HUD pills — float above player, pointer-events none so player still works -->
@@ -487,50 +291,103 @@ const hud            = document.getElementById('hud');
 const hudState       = document.getElementById('hud-state');
 const hudFormat      = document.getElementById('hud-format');
 const mirrorVideo    = document.getElementById('mirror-video');
-const castPlayer     = document.querySelector('cast-media-player');
 
 let hasStartedPlaying = false; // track if we've ever played this session
-let currentMediaIsImage = false;
 let mirrorMode = false;
 let activeSenderId = null;
 let peerConnection = null;
 let pendingIce = [];
 let mirrorRoomId = null;
 let signalingSocket = null;
+let signalingURL = null;
+let signalingReconnectTimer = null;
+let signalingReconnectAttempts = 0;
+let statsTimer = null;
+let lastReceiverStats = null;
+const signalingReconnectBaseDelayMs = 1200;
+const signalingReconnectMaxAttempts = 8;
 
-function suppressBuiltInPlayerChrome() {
-  if (!castPlayer) return;
+function formatKbps(value) {
+  if (!Number.isFinite(value)) return 'n/a';
+  return `${Math.round(value)} kbps`;
+}
 
-  castPlayer.style.setProperty('--progress-color', 'rgba(0,0,0,0)');
-  castPlayer.style.setProperty('--play-image', 'none');
-  castPlayer.style.setProperty('--pause-image', 'none');
-  castPlayer.style.setProperty('--buffering-image', 'none');
-  castPlayer.style.setProperty('--watermark-image', 'none');
+function startReceiverStats() {
+  if (statsTimer) {
+    clearInterval(statsTimer);
+    statsTimer = null;
+  }
+  lastReceiverStats = null;
 
-  const root = castPlayer.shadowRoot;
-  if (!root || root.getElementById('smartcast-hide-player-chrome')) return;
+  statsTimer = setInterval(async () => {
+    if (!peerConnection) return;
 
-  const style = document.createElement('style');
-  style.id = 'smartcast-hide-player-chrome';
-  style.textContent = `
-    .controls,
-    .controls-container,
-    .media-controls,
-    .metadata,
-    .metadata-container,
-    .progress,
-    .progress-bar,
-    .progressBar,
-    .seek-bar,
-    .scrubber,
-    .watermark,
-    .playback-logo {
-      display: none !important;
-      opacity: 0 !important;
-      visibility: hidden !important;
+    try {
+      const report = await peerConnection.getStats();
+
+      let inboundVideo = null;
+      let selectedCandidatePair = null;
+
+      report.forEach((stat) => {
+        if (stat.type === 'inbound-rtp' && stat.kind === 'video' && !stat.isRemote) {
+          inboundVideo = stat;
+        } else if (stat.type === 'candidate-pair' && (stat.selected || stat.nominated)) {
+          selectedCandidatePair = stat;
+        }
+      });
+
+      if (!inboundVideo) return;
+
+      let bitrateKbps = NaN;
+      if (lastReceiverStats &&
+          Number.isFinite(inboundVideo.bytesReceived) &&
+          Number.isFinite(inboundVideo.timestamp)) {
+        const bytesDelta = inboundVideo.bytesReceived - lastReceiverStats.bytesReceived;
+        const timeDeltaMs = inboundVideo.timestamp - lastReceiverStats.timestamp;
+        if (bytesDelta >= 0 && timeDeltaMs > 0) {
+          bitrateKbps = (bytesDelta * 8) / timeDeltaMs;
+        }
+      }
+
+      lastReceiverStats = {
+        bytesReceived: inboundVideo.bytesReceived || 0,
+        timestamp: inboundVideo.timestamp || 0
+      };
+
+      const width = inboundVideo.frameWidth || 0;
+      const height = inboundVideo.frameHeight || 0;
+      const fps = inboundVideo.framesPerSecond || 0;
+      const jitterMs = Number.isFinite(inboundVideo.jitter) ? (inboundVideo.jitter * 1000).toFixed(1) : 'n/a';
+      const packetsLost = Number.isFinite(inboundVideo.packetsLost) ? inboundVideo.packetsLost : 'n/a';
+      const rttMs = selectedCandidatePair && Number.isFinite(selectedCandidatePair.currentRoundTripTime)
+        ? (selectedCandidatePair.currentRoundTripTime * 1000).toFixed(1)
+        : 'n/a';
+
+      const statsMessage = `[ReceiverStats] ${width}x${height} ${fps}fps | bitrate=${formatKbps(bitrateKbps)} | jitter=${jitterMs}ms | rtt=${rttMs}ms | lost=${packetsLost}`;
+
+      console.log(statsMessage);
+      sendMirrorMessage('mirrorStats', {
+        width,
+        height,
+        fps,
+        bitrateKbps: Number.isFinite(bitrateKbps) ? Math.round(bitrateKbps) : null,
+        jitterMs,
+        rttMs,
+        packetsLost,
+        line: statsMessage
+      });
+    } catch (error) {
+      console.warn('[ReceiverStats] Failed to collect stats', error);
     }
-  `;
-  root.appendChild(style);
+  }, 3000);
+}
+
+function stopReceiverStats() {
+  if (statsTimer) {
+    clearInterval(statsTimer);
+    statsTimer = null;
+  }
+  lastReceiverStats = null;
 }
 
 // --- Single state machine: only one screen at a time ---
@@ -543,8 +400,6 @@ function showState(state, opts = {}) {
   switch (state) {
     case 'idle':
       hasStartedPlaying = false;
-      currentMediaIsImage = false;
-      hudFormat.style.display = 'none';
       idleScreen.classList.remove('hidden');
       break;
 
@@ -557,8 +412,8 @@ function showState(state, opts = {}) {
 
     case 'playing':
       hasStartedPlaying = true;
-      hudFormat.style.display = 'none';
-      suppressBuiltInPlayerChrome();
+      hudState.textContent = 'PLAYING';
+      hud.classList.add('visible');
       break;
 
     case 'mirroring':
@@ -568,8 +423,8 @@ function showState(state, opts = {}) {
       break;
 
     case 'paused':
-      hudFormat.style.display = 'none';
-      suppressBuiltInPlayerChrome();
+      hudState.textContent = 'PAUSED';
+      hud.classList.add('visible');
       break;
 
     case 'error':
@@ -600,15 +455,22 @@ function sendSignal(payload) {
 }
 
 function connectSignaling(signalingUrl, roomId) {
+  if (signalingReconnectTimer) {
+    clearTimeout(signalingReconnectTimer);
+    signalingReconnectTimer = null;
+  }
+
   if (signalingSocket) {
     signalingSocket.close();
     signalingSocket = null;
   }
 
   mirrorRoomId = roomId;
+  signalingURL = signalingUrl;
   signalingSocket = new WebSocket(signalingUrl);
 
   signalingSocket.onopen = () => {
+    signalingReconnectAttempts = 0;
     signalingSocket.send(JSON.stringify({
       type: 'join',
       roomId,
@@ -628,30 +490,9 @@ function connectSignaling(signalingUrl, roomId) {
         const pc = await createPeerConnection();
         await pc.setRemoteDescription({ type: 'offer', sdp: payload.sdp });
 
-        // Prefer H264 for better text/detail quality on many TV decoders.
-        const caps = RTCRtpReceiver.getCapabilities ? RTCRtpReceiver.getCapabilities('video') : null;
-        if (caps && caps.codecs && caps.codecs.length > 0) {
-          const h264 = caps.codecs.filter((c) => c.mimeType && c.mimeType.toLowerCase() === 'video/h264');
-          const others = caps.codecs.filter((c) => !c.mimeType || c.mimeType.toLowerCase() !== 'video/h264');
-          const preferred = [...h264, ...others];
-          pc.getTransceivers().forEach((t) => {
-            if (t.receiver && t.receiver.track && t.receiver.track.kind === 'video' && t.setCodecPreferences) {
-              t.setCodecPreferences(preferred);
-            }
-          });
-        }
-
-        // Low latency playback hints (best-effort, browser-dependent).
-        pc.getReceivers().forEach((r) => {
-          if (r.track && r.track.kind === 'video') {
-            if ('playoutDelayHint' in r) {
-              r.playoutDelayHint = 0;
-            }
-            if ('jitterBufferTarget' in r) {
-              r.jitterBufferTarget = 0;
-            }
-          }
-        });
+        // Use browser defaults for codec + buffering.
+        // For this receiver/runtime, forced H264 and custom playout hints can
+        // destabilize bitrate adaptation and cause severe downscale collapse.
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
@@ -666,6 +507,31 @@ function connectSignaling(signalingUrl, roomId) {
         } else {
           pendingIce.push(ice);
         }
+        return;
+      }
+
+      if (signalType === 'senderStats') {
+        const captureWidth = payload.captureWidth || 0;
+        const captureHeight = payload.captureHeight || 0;
+        const captureFPS = payload.captureFPS || 0;
+        const peerState = payload.peerState;
+
+        const line = `[SenderStats] capture=${captureWidth}x${captureHeight} ${captureFPS}fps | peerState=${peerState}`;
+        console.log(line);
+        sendMirrorMessage('senderStats', { line, captureWidth, captureHeight, captureFPS, peerState });
+        return;
+      }
+
+      if (signalType === 'senderRtcStats') {
+        const encodeWidth = payload.encodeWidth || 0;
+        const encodeHeight = payload.encodeHeight || 0;
+        const encodeFPS = payload.encodeFPS || 0;
+        const outboundBitrateKbps = payload.outboundBitrateKbps;
+        const bitrateText = Number.isFinite(outboundBitrateKbps) ? `${outboundBitrateKbps} kbps` : 'n/a';
+
+        const line = `[SenderRTC] encode=${encodeWidth}x${encodeHeight} ${encodeFPS}fps | outbound=${bitrateText}`;
+        console.log(line);
+        sendMirrorMessage('senderRtcStats', { line, encodeWidth, encodeHeight, encodeFPS, outboundBitrateKbps });
       }
     } catch (error) {
       console.error('[Receiver] signaling message error', error);
@@ -674,11 +540,19 @@ function connectSignaling(signalingUrl, roomId) {
   };
 
   signalingSocket.onerror = () => {
-    sendMirrorMessage('mirrorError', { message: 'Signaling socket error' });
+    console.warn('[Receiver] Signaling socket error');
   };
 
   signalingSocket.onclose = () => {
     signalingSocket = null;
+
+    if (mirrorMode && signalingURL && mirrorRoomId && signalingReconnectAttempts < signalingReconnectMaxAttempts) {
+      const delay = signalingReconnectBaseDelayMs * (signalingReconnectAttempts + 1);
+      signalingReconnectAttempts += 1;
+      signalingReconnectTimer = setTimeout(() => {
+        connectSignaling(signalingURL, mirrorRoomId);
+      }, delay);
+    }
   };
 }
 
@@ -688,12 +562,26 @@ async function createPeerConnection() {
   peerConnection = new RTCPeerConnection({
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
   });
+peerConnection = new RTCPeerConnection({
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    {
+      urls: [
+        'turn:129.80.98.178:3478?transport=udp',
+        'turn:129.80.98.178:3478?transport=tcp'
+      ],
+      username: 'castify',
+      credential: 'smartcastpro-secret'
+    }
+  ]
+});
 
   peerConnection.ontrack = (event) => {
     if (!event.streams || event.streams.length === 0) return;
     mirrorVideo.srcObject = event.streams[0];
     setMirrorVisible(true);
     mirrorMode = true;
+    startReceiverStats();
     showState('mirroring');
     sendMirrorMessage('mirrorStarted');
   };
@@ -726,6 +614,13 @@ async function createPeerConnection() {
 
 function resetMirrorSession() {
   pendingIce = [];
+  signalingReconnectAttempts = 0;
+  stopReceiverStats();
+
+  if (signalingReconnectTimer) {
+    clearTimeout(signalingReconnectTimer);
+    signalingReconnectTimer = null;
+  }
 
   if (peerConnection) {
     peerConnection.ontrack = null;
@@ -741,6 +636,7 @@ function resetMirrorSession() {
   }
 
   mirrorRoomId = null;
+  signalingURL = null;
   mirrorVideo.srcObject = null;
   setMirrorVisible(false);
   mirrorMode = false;
@@ -784,10 +680,6 @@ context.addCustomMessageListener(mirrorNamespace, async (event) => {
 });
 
 // --- MIME detection ---
-function isImageMime(contentType) {
-  return (contentType || '').toLowerCase().startsWith('image/');
-}
-
 function detectMime(url) {
   const u = (url || '').split('?')[0].toLowerCase();
   if (u.endsWith('.m3u8'))  return 'application/x-mpegURL';
@@ -827,12 +719,11 @@ playerManager.setMessageInterceptor(
       media.contentType = detectMime(media.contentUrl);
     }
 
-    currentMediaIsImage = isImageMime(media.contentType);
-
-    hudFormat.style.display = 'none';
+    const fmt = media.contentType.split('/')[1]?.toUpperCase() || 'VIDEO';
+    hudFormat.textContent = fmt;
+    hudFormat.style.display = 'flex';
 
     showState('loading', { msg: 'Loading media…' });
-    suppressBuiltInPlayerChrome();
 
     return request;
   }
@@ -890,7 +781,6 @@ playerManager.addEventListener(EV.ENDED, () => {
 /* ── CONTEXT EVENTS ── */
 context.addEventListener(cast.framework.system.EventType.READY, () => {
   console.log('[Receiver] Ready');
-  suppressBuiltInPlayerChrome();
   showState('idle');
 });
 
@@ -901,8 +791,15 @@ context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, (e) =
 context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, (e) => {
   console.log('[Receiver] Sender disconnected:', e.senderId);
   if (e.senderId === activeSenderId) {
-    resetMirrorSession();
     activeSenderId = null;
+
+    // Keep ongoing mirroring alive when the iOS controller app exits.
+    // The broadcast extension can continue streaming over WebRTC independently.
+    if (!mirrorMode) {
+      resetMirrorSession();
+    } else {
+      console.log('[Receiver] Controller disconnected during mirroring; keeping WebRTC session active.');
+    }
   }
 });
 
